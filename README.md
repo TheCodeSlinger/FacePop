@@ -5,9 +5,9 @@
 ![FacePop Logo](resources/logo2.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
 
-   ![Face Crop + Background Removal](resources/face_crop.png)
-   ![Landmark Detection and Facial Upright Alignment](resources/face_alignment.png)
-   ![Final pass masking using Inmainting mask, combines with Inptainting](resources/face_mask.png)
+<img src="resources/face_crop.png" alt="Face Crop + Background Removal" width="600"/>
+<img src="resources/face_alignment.png" alt="Landmark Detection and Facial Upright Alignment" width="600"/>
+<img src="resources/face_mask.png" alt="Final pass masking using Inpainting mask, combines with Inpainting" width="600"/>
 
 **FacePop** is a robust extension for [AUTOMATIC1111's Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) that enhances image processing by detecting, enhancing, and managing faces within images. Leveraging advanced technologies like [Mediapipe](https://mediapipe.dev/), [MODNet](https://github.com/ZHKKKe/MODNet), and [ControlNet](https://github.com/lllyasviel/ControlNet), FacePop streamlines tasks such as face detection, background removal, and image enhancement directly within your Stable Diffusion workflow.
 
