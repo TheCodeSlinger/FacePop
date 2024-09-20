@@ -1,0 +1,7 @@
+; ignore any of these scripts when faces are being processed
+[faces]
+ADetailer
+
+; ignore any of these scripts during final image composite
+[final]
+ReActor
