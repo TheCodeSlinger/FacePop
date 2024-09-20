@@ -5,23 +5,76 @@
 ![FacePop Logo](resources/logo2.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
 
+   ![Face Crop + Background Removal](resources/face_crop.png)
+   ![Landmark Detection and Facial Upright Alignment](resources/face_alignment.png)
+   ![Final pass masking using Inmainting mask, combines with Inptainting](resources/face_mask.png)
+
 **FacePop** is a robust extension for [AUTOMATIC1111's Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) that enhances image processing by detecting, enhancing, and managing faces within images. Leveraging advanced technologies like [Mediapipe](https://mediapipe.dev/), [MODNet](https://github.com/ZHKKKe/MODNet), and [ControlNet](https://github.com/lllyasviel/ControlNet), FacePop streamlines tasks such as face detection, background removal, and image enhancement directly within your Stable Diffusion workflow.
 
 ## Motivation
 
-FacePop was developed as a robust solution to the limitations encountered with existing tools like **Zoom Enhancer**, eliminating the need for additional extensions such as **Unprompted**. While **Zoom Enhancer** provides basic facial zoom capabilities, FacePop takes facial enhancement to a much higher level by offering unparalleled control and flexibility over facial detection and processing features. This extension not only enhances the zoom functionality but also integrates seamlessly with other popular plugins like **ControlNet**, **ReActor**, and **After Detailer**. 
+FacePop was developed as a solution to the limitations encountered with existing tools like **Zoom Enhancer**, eliminating the need for additional extensions such as **Unprompted**. While **Zoom Enhancer** provides basic facial zoom capabilities, FacePop offers more control and flexibility over facial detection and processing features. This extension not only enhances the zoom functionality but also integrates seamlessly with other popular plugins like **ControlNet**, **ReActor**, and **After Detailer**.
 
-By leveraging these integrations, FacePop empowers users to customize their image processing workflows extensively, ensuring that each facial enhancement task can be fine-tuned to meet specific requirements. Whether it's for detailed facial feature refinement, background removal, or leveraging advanced image manipulation techniques, FacePop provides the tools necessary to achieve superior results. This comprehensive approach ensures that users have greater leverage and control over their image enhancements, making FacePop an indispensable tool for anyone looking to elevate their Stable Diffusion experience.
+By leveraging these integrations, FacePop allows users to customize their image processing workflows extensively, ensuring that each facial enhancement task can be fine-tuned to meet specific requirements. Whether it's for facial feature refinement, background removal, or advanced image manipulation techniques, FacePop provides the necessary tools to achieve better results. This approach ensures that users have greater control over their image enhancements, making FacePop a valuable tool for anyone looking to improve their Stable Diffusion experience.
 
+## What it Does
+
+**FacePop** simplifies facial image processing within the Stable Diffusion workflow by offering a straightforward and customizable solution. Here's how FacePop works:
+
+1. **Face Detection**:
+    - **Accurate Identification**: Uses [Mediapipe](https://mediapipe.dev/) to accurately detect and locate all faces within an image.
+    - **Landmark Detection**: Identifies key facial landmarks to ensure proper cropping and alignment.
+
+2. **Face Cropping and Upscaling**:
+    - **Automatic Cropping**: Each detected face is cropped from the main image based on user-defined settings for width, height, and padding.
+    - **Upscaling**: The cropped faces are upscaled to the specified dimensions, enhancing their resolution and detail.
+
+3. **Separate Processing of Faces**:
+    - **Individual Enhancements**: Each cropped face is processed separately, allowing for targeted enhancements like color correction, sharpening, and background removal using tools like [MODNet](https://github.com/ZHKKKe/MODNet).
+    - **Custom Settings**: Users can adjust processing parameters to suit specific needs for each face.
+
+4. **Mask Creation and Integration**:
+    - **Creating Masks**: After processing, FacePop generates masks around each enhanced face.
+    - **Blending**: These masks help seamlessly blend the enhanced faces back into the original image without visible seams or artifacts.
+
+5. **Final Image Composite and Processing**:
+    - **Reintegration**: The processed faces are placed back onto their original locations in the main image using the created masks.
+    - **Final Enhancements**: The entire composite image is then subjected to final processing, which may include additional enhancements or integration with other plugins like [ControlNet](https://github.com/lllyasviel/ControlNet), [ReActor](https://github.com/your-repo/ReActor), and [After Detailer](https://github.com/your-repo/After-Detailer).
+    - **Polished Output**: Ensures that all elements of the image are harmoniously combined for a professional-grade final image.
+
+6. **Integration with Other Plugins**:
+    - **Compatibility**: Designed to work seamlessly with popular extensions like **ControlNet**, **ReActor**, and **After Detailer**, allowing users to leverage multiple tools within a single workflow.
+    - **Enhanced Features**: Provides additional capabilities without the need for extra dependencies like the **Unprompted** extension.
+
+7. **User-Friendly Controls and Settings**:
+    - **Easy Configuration**: Offers an intuitive interface within the Stable Diffusion Web UI for configuring face detection, cropping dimensions, padding, and processing parameters.
+    - **Adjustable Parameters**: Users can fine-tune various settings to control the processing workflow and achieve desired results.
+
+8. **Performance Optimization**:
+    - **Efficient Processing**: Handles face detection and processing separately to optimize performance, enabling faster image enhancements even with multiple faces.
+    - **Resource Management**: Manages system resources effectively to ensure smooth operation without significant slowdowns, even when integrating with other resource-intensive plugins.
+
+**Benefits of Using FacePop**:
+
+- **Greater Control**: Provides more precise control over facial zoom enhancements compared to tools like **Zoom Enhancer**, allowing for tailored adjustments.
+- **Higher Quality**: Delivers better quality results through advanced processing techniques and seamless plugin integrations.
+- **Flexible Usage**: Suitable for a wide range of use cases, from simple face enhancements to complex image manipulations involving multiple plugins.
+- **Simplified Workflow**: Combines multiple processing steps into a single, cohesive workflow, reducing the need for multiple extensions and simplifying the overall image enhancement process.
+- **Scalable**: Efficiently handles images with numerous faces, making it ideal for both individual and bulk processing tasks.
+
+By addressing the limitations of existing tools and offering a more versatile approach to facial image processing, FacePop becomes an essential extension for users seeking advanced control and improved results within the Stable Diffusion ecosystem. Whether you're enhancing portraits, refining facial features, or integrating with other image manipulation tools, FacePop provides the necessary capabilities to achieve exceptional outcomes.
 
 ## Table of Contents
 
+- [Top](#facepop)
+- [Motivation](#motivation)
+- [What it Does](#what-it-does)
 - [Features](#features)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
   - [Install via Extensions Manager](#install-via-extensions-manager)
 - [Usage](#usage)
-- [Deny Scripts File] (#DenyScriptsList)
+- [Deny Scripts File](#deny-scripts-list)
 - [Screenshots](#screenshots)
 - [Dependencies](#dependencies)
 - [Contributing](#contributing)
@@ -117,7 +170,7 @@ ADetailer
 ; ignore any of these scripts during final image composite
 [final]
 ReActor
-
+```
 ## Screenshots
 
 ![FacePop UI Panel](resources/ui_screenshot.png)
@@ -144,7 +197,7 @@ These dependencies are automatically handled during installation via the Extensi
 
 ```bash
 pip install mediapipe modnet torch torchvision opencv-python gradio
-
+```
 ## **Additional Resources**
 
 ### **Model Files**
@@ -225,5 +278,4 @@ FacePop utilizes pre-trained models for efficient and accurate face detection. B
 
 
 ---
-
 
