@@ -17,6 +17,7 @@ The red dots indicate the original position of the landmark detection. The image
 <img src="resources/face_mask.png" alt="Final pass masking using Inpainting mask, combines with Inpainting" width="300"/>
 For final image composite a robust mask inpainting mask is applied so it doesn't receive a second generative process, but the rest of the image does. This allows for very good results of generative blending with the rest of the image.
 
+## Introduction
 **FacePop** is a robust extension for [AUTOMATIC1111's Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) that enhances image processing by detecting, enhancing, and managing faces within images. Leveraging advanced technologies like [Mediapipe](https://mediapipe.dev/), [MODNet](https://github.com/ZHKKKe/MODNet), and [ControlNet](https://github.com/lllyasviel/ControlNet), FacePop streamlines tasks such as face detection, background removal, and image enhancement directly within your Stable Diffusion workflow.
 
 ## Motivation
@@ -286,6 +287,5 @@ FacePop utilizes pre-trained models for efficient and accurate face detection. B
 
 
 ---
-
 
 
