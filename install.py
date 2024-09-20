@@ -16,13 +16,4 @@ if not launch.is_installed("opencv-contrib-python"):
     print("[FacePop Debug] OpenCV Contrib is not installed. Installing...")
     launch.run_pip("install opencv-contrib-python", "requirements for FacePop (OpenCV Contrib)")
 
-# Check for RetinaFace package
-#if not launch.is_installed("retinaface"):
-#    print("[FacePop Debug] RetinaFace is not installed. Installing ")
-#    launch.run_pip("install retinaface", "requirements for FacePop (RetinaFace)")
-
-# Check for MODNet package
-#if not launch.is_installed("modnet"):
-#    print("[FacePop Debug] MODNet is not installed. Installing...")
-#    launch.run_pip("install modnet", "requirements for FacePop (MODNet)")
 
