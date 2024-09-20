@@ -5,14 +5,17 @@
 ![FacePop Logo](resources/logo2.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
 
+## Cropping Upscaling and BG Removal
 <img src="resources/face_crop.png" alt="Face Crop + Background Removal" width="300"/>
-## An example of the low resolution image cropped, background removed, angle set for best generative img2img processing and first processing pass.
+An example of the low resolution image cropped, background removed, angle set for best generative img2img processing and first processing pass.
 
+## Face Alignment for Processing
 <img src="resources/face_alignment.png" alt="Landmark Detection and Facial Upright Alignment" width="300"/>
-## The red dots indicate the original position of the landmark detection. The image behind it is the face tilted to the most ideal upright angle for generative img2img processing.
+The red dots indicate the original position of the landmark detection. The image behind it is the face tilted to the most ideal upright angle for generative img2img processing.
 
+## Final Process Masking
 <img src="resources/face_mask.png" alt="Final pass masking using Inpainting mask, combines with Inpainting" width="300"/>
-## For final image composite a robust mask inpainting mask is applied so it doesn't receive a second generative process, but the rest of the image does. This allows for very good results of generative blending with the rest of the image.
+For final image composite a robust mask inpainting mask is applied so it doesn't receive a second generative process, but the rest of the image does. This allows for very good results of generative blending with the rest of the image.
 
 **FacePop** is a robust extension for [AUTOMATIC1111's Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) that enhances image processing by detecting, enhancing, and managing faces within images. Leveraging advanced technologies like [Mediapipe](https://mediapipe.dev/), [MODNet](https://github.com/ZHKKKe/MODNet), and [ControlNet](https://github.com/lllyasviel/ControlNet), FacePop streamlines tasks such as face detection, background removal, and image enhancement directly within your Stable Diffusion workflow.
 
@@ -283,5 +286,6 @@ FacePop utilizes pre-trained models for efficient and accurate face detection. B
 
 
 ---
+
 
 
