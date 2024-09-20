@@ -5,10 +5,19 @@
 ![FacePop Logo](resources/logo2.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
 
-<img src="resources/face_crop.png" alt="Face Crop + Background Removal" width="600"/>
-<img src="resources/face_alignment.png" alt="Landmark Detection and Facial Upright Alignment" width="600"/>
-<img src="resources/face_mask.png" alt="Final pass masking using Inpainting mask, combines with Inpainting" width="600"/>
+## Cropping Upscaling and BG Removal
+<img src="resources/face_crop.png" alt="Face Crop + Background Removal" width="300"/>
+An example of the low resolution image cropped, background removed, angle set for best generative img2img processing and first processing pass.
 
+## Face Alignment for Processing
+<img src="resources/face_alignment.png" alt="Landmark Detection and Facial Upright Alignment" width="300"/>
+The red dots indicate the original position of the landmark detection. The image behind it is the face tilted to the most ideal upright angle for generative img2img processing.
+
+## Final Process Masking
+<img src="resources/face_mask.png" alt="Final pass masking using Inpainting mask, combines with Inpainting" width="300"/>
+For final image composite a robust mask inpainting mask is applied so it doesn't receive a second generative process, but the rest of the image does. This allows for very good results of generative blending with the rest of the image.
+
+## Introduction
 **FacePop** is a robust extension for [AUTOMATIC1111's Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) that enhances image processing by detecting, enhancing, and managing faces within images. Leveraging advanced technologies like [Mediapipe](https://mediapipe.dev/), [MODNet](https://github.com/ZHKKKe/MODNet), and [ControlNet](https://github.com/lllyasviel/ControlNet), FacePop streamlines tasks such as face detection, background removal, and image enhancement directly within your Stable Diffusion workflow.
 
 ## Motivation
@@ -22,47 +31,38 @@ By leveraging these integrations, FacePop allows users to customize their image 
 **FacePop** simplifies facial image processing within the Stable Diffusion workflow by offering a straightforward and customizable solution. Here's how FacePop works:
 
 1. **Face Detection**:
-    - **Accurate Identification**: Uses [Mediapipe](https://mediapipe.dev/) to accurately detect and locate all faces within an image.
-    - **Landmark Detection**: Identifies key facial landmarks to ensure proper cropping and alignment.
+    - **Spotting Faces**: Uses [Mediapipe](https://mediapipe.dev/) to accurately find and locate all the faces in your image.
+    - **Finding Landmarks**: Identifies key points on each face to ensure they're properly aligned for the next steps.
 
 2. **Face Cropping and Upscaling**:
-    - **Automatic Cropping**: Each detected face is cropped from the main image based on user-defined settings for width, height, and padding.
-    - **Upscaling**: The cropped faces are upscaled to the specified dimensions, enhancing their resolution and detail.
+    - **Cutting Out Faces**: Each detected face is neatly cropped from the main image based on your settings for width, height, and padding.
+    - **Boosting Resolution**: The cropped faces are then upscaled to your chosen dimensions, making them clearer and more detailed.
 
-3. **Separate Processing of Faces**:
-    - **Individual Enhancements**: Each cropped face is processed separately, allowing for targeted enhancements like color correction, sharpening, and background removal using tools like [MODNet](https://github.com/ZHKKKe/MODNet).
-    - **Custom Settings**: Users can adjust processing parameters to suit specific needs for each face.
+3. **Rotating Faces Upright**:
+    - **Aligning Faces**: Faces that are at odd angles or even upside down are rotated to an upright position. This ensures consistency and better quality during processing.
+    - **Consistent Processing**: By standardizing the orientation, FacePop ensures that all faces, regardless of their original position, are enhanced uniformly.
 
-4. **Mask Creation and Integration**:
-    - **Creating Masks**: After processing, FacePop generates masks around each enhanced face.
-    - **Blending**: These masks help seamlessly blend the enhanced faces back into the original image without visible seams or artifacts.
+4. **Separate Processing of Faces**:
+    - **Focused Enhancements**: Each upright and upscaled face is processed individually. This allows for targeted improvements like color correction, sharpening, and background removal using [MODNet](https://github.com/ZHKKKe/MODNet).
+    - **Independent Settings**: You can adjust sampling steps, CFG scaling, and denoising levels specifically for face processing, giving you more control over the final look.
 
-5. **Final Image Composite and Processing**:
-    - **Reintegration**: The processed faces are placed back onto their original locations in the main image using the created masks.
-    - **Final Enhancements**: The entire composite image is then subjected to final processing, which may include additional enhancements or integration with other plugins like [ControlNet](https://github.com/lllyasviel/ControlNet), [ReActor](https://github.com/your-repo/ReActor), and [After Detailer](https://github.com/your-repo/After-Detailer).
-    - **Polished Output**: Ensures that all elements of the image are harmoniously combined for a professional-grade final image.
+5. **Mask Creation and Integration**:
+    - **Making Masks**: After processing, FacePop creates masks around each enhanced face. This ensures that only the faces are affected during reintegration.
+    - **Seamless Blending**: The masks help blend the enhanced faces back into the original image smoothly, avoiding any visible edges or mismatches.
 
-6. **Integration with Other Plugins**:
-    - **Compatibility**: Designed to work seamlessly with popular extensions like **ControlNet**, **ReActor**, and **After Detailer**, allowing users to leverage multiple tools within a single workflow.
-    - **Enhanced Features**: Provides additional capabilities without the need for extra dependencies like the **Unprompted** extension.
+6. **Final Image Composite and Processing**:
+    - **Putting Faces Back**: The enhanced and properly oriented faces are placed back into their original spots in the main image using the masks.
+    - **Final Touches**: The entire image is then processed again, which might include additional enhancements or integrations with other plugins like [ControlNet](https://github.com/lllyasviel/ControlNet), [ReActor](https://github.com/your-repo/ReActor), and [After Detailer](https://github.com/your-repo/After-Detailer). This step ensures everything looks polished and cohesive.
 
-7. **User-Friendly Controls and Settings**:
-    - **Easy Configuration**: Offers an intuitive interface within the Stable Diffusion Web UI for configuring face detection, cropping dimensions, padding, and processing parameters.
-    - **Adjustable Parameters**: Users can fine-tune various settings to control the processing workflow and achieve desired results.
+**Why FacePop?**
 
-8. **Performance Optimization**:
-    - **Efficient Processing**: Handles face detection and processing separately to optimize performance, enabling faster image enhancements even with multiple faces.
-    - **Resource Management**: Manages system resources effectively to ensure smooth operation without significant slowdowns, even when integrating with other resource-intensive plugins.
+With **FacePop**, you get:
 
-**Benefits of Using FacePop**:
+- **Better, More Consistent Faces**: Especially when using ControlNet's IPAdapter, FacePop ensures that all faces, regardless of their original orientation, are processed consistently for a uniform look.
+- **Enhanced Control**: Adjust settings like sampling steps, CFG scaling, and denoising independently for faces, giving you the flexibility to tweak each face to perfection.
+- **Smooth Integration**: Works seamlessly with other popular plugins, allowing you to incorporate FacePop into your existing workflow without any hassle.
 
-- **Greater Control**: Provides more precise control over facial zoom enhancements compared to tools like **Zoom Enhancer**, allowing for tailored adjustments.
-- **Higher Quality**: Delivers better quality results through advanced processing techniques and seamless plugin integrations.
-- **Flexible Usage**: Suitable for a wide range of use cases, from simple face enhancements to complex image manipulations involving multiple plugins.
-- **Simplified Workflow**: Combines multiple processing steps into a single, cohesive workflow, reducing the need for multiple extensions and simplifying the overall image enhancement process.
-- **Scalable**: Efficiently handles images with numerous faces, making it ideal for both individual and bulk processing tasks.
-
-By addressing the limitations of existing tools and offering a more versatile approach to facial image processing, FacePop becomes an essential extension for users seeking advanced control and improved results within the Stable Diffusion ecosystem. Whether you're enhancing portraits, refining facial features, or integrating with other image manipulation tools, FacePop provides the necessary capabilities to achieve exceptional outcomes.
+By handling faces in a structured and efficient way, **FacePop** helps you achieve high-quality images with minimal effort. Whether you're tweaking a single portrait or handling multiple faces in a group shot, FacePop streamlines the process, making your image enhancements faster and more reliable.
 
 ## Table of Contents
 
@@ -171,6 +171,11 @@ ADetailer
 [final]
 ReActor
 ```
+
+**NOTE:** The main reason ReActor is excluded from final process is it seems to ingore inpaint masks, which the final composite image requires to prevent double processing of the face.
+
+**NOTE:** ADetailer, we want to work but only on the final compsite image, not the upscaled cropped face. Some features in Adetailer work on other things like fingers and full body that may not be visible in just the face upscale. It hasn't been fully tested yet, and the final mask may prevent it from working as intended and I may need to come back to a solution for that if issues are submitted requesting this.
+
 ## Screenshots
 
 ![FacePop UI Panel](resources/ui_screenshot.png)
@@ -212,23 +217,11 @@ FacePop utilizes pre-trained models for efficient and accurate face detection. B
 
 - **Download Link**:
   
-  You can download the `deploy.prototxt` file from the [OpenCV GitHub repository](https://github.com/opencv/opencv/blob/master/samples/dnn/face_detector/deploy.prototxt).
+  You can download the `deploy.prototxt` file directly from the [FacePop repository](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/deploy.prototxt).
 
 - **License**:
   
-  The `deploy.prototxt` file is part of the OpenCV project and is licensed under the [BSD 3-Clause License](https://opensource.org/licenses/BSD-3-Clause). Below is a summary of the license:
-
-  > **BSD 3-Clause License**
-  >
-  > Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-  >
-  > 1. Redistributions of source code must retain the above copyright notice, this list of conditions, and the following disclaimer.
-  > 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions, and the following disclaimer in the documentation and/or other materials provided with the distribution.
-  > 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-  >
-  > **Disclaimer**:
-  >
-  > THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+  The `deploy.prototxt` file is part of the OpenCV project and is licensed under the [Apache-2.0 License](https://opensource.org/licenses/Apache-2.0).
 
 #### **2. res10_300x300_ssd_iter_140000.caffemodel**
 
@@ -238,44 +231,48 @@ FacePop utilizes pre-trained models for efficient and accurate face detection. B
 
 - **Download Link**:
   
-  You can download the `res10_300x300_ssd_iter_140000.caffemodel` file from the [OpenCV GitHub repository](https://github.com/opencv/opencv/blob/master/samples/dnn/face_detector/res10_300x300_ssd_iter_140000.caffemodel).
+  You can download the `res10_300x300_ssd_iter_140000.caffemodel` file directly from the [FacePop repository](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/res10_300x300_ssd_iter_140000.caffemodel).
 
 - **License**:
   
-  Similar to the `deploy.prototxt`, the `res10_300x300_ssd_iter_140000.caffemodel` is part of the OpenCV project and is licensed under the [BSD 3-Clause License](https://opensource.org/licenses/BSD-3-Clause). Below is a summary of the license:
+  Similar to the `deploy.prototxt`, the `res10_300x300_ssd_iter_140000.caffemodel` is part of the OpenCV project and is licensed under the [Apache-2.0 License](https://opensource.org/licenses/Apache-2.0).
 
-  > **BSD 3-Clause License**
-  >
-  > Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-  >
-  > 1. Redistributions of source code must retain the above copyright notice, this list of conditions, and the following disclaimer.
-  > 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions, and the following disclaimer in the documentation and/or other materials provided with the distribution.
-  > 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-  >
-  > **Disclaimer**:
-  >
-  > THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
 
-#### **3. How to Obtain and Integrate the Model Files**
+#### **3. MODNet**
+
+- **Description**:
+  
+  [MODNet](https://github.com/ZHKKKe/MODNet) is used for background removal and matting. It provides high-quality portrait matting by accurately separating the foreground (person) from the background.
+
+- **Download Link**:
+  
+  You can download the MODNet model files directly from the [FacePop repository](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/modnet.pth).
+
+- **License**:
+
+  MODNet is licensed under the [Apache-2.0 License](https://opensource.org/licenses/Apache-2.0).
+
+#### **4. How to Obtain and Integrate the Model Files**
 
 1. **Download the Files**:
    
-   - **deploy.prototxt**: [Download Here](https://github.com/opencv/opencv/blob/master/samples/dnn/face_detector/deploy.prototxt)
-   - **res10_300x300_ssd_iter_140000.caffemodel**: [Download Here](https://github.com/opencv/opencv/blob/master/samples/dnn/face_detector/res10_300x300_ssd_iter_140000.caffemodel)
+   - **deploy.prototxt**: [Download Here](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/deploy.prototxt)
+   - **res10_300x300_ssd_iter_140000.caffemodel**: [Download Here](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/res10_300x300_ssd_iter_140000.caffemodel)
+   - **MODNet**: [Download Here](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/modnet.pth)
 
-2. **Place the Files in \stable-diffusion-webui\extensions\FacePop\scripts\**:
-   
-   - Create a `models` directory within your `FacePop` project folder:
-     ```bash
-     mkdir models
-     ```
-   - Move the downloaded files into the `models` directory:
-     ```bash
-     mv \stable-diffusion-webui\extensions\FacePop\scripts\deploy.prototxt models/
-     mv \stable-diffusion-webui\extensions\FacePop\scripts\res10_300x300_ssd_iter_140000.caffemodel models/
-     ```
-
-
+2. **Place the Files in `\stable-diffusion-webui\extensions\FacePop\scripts\`**:
 
 ---
+
+## **License**
+
+FacePop is licensed under the [MIT License](LICENSE). See the [LICENSE](LICENSE) file for more details.
+
+```text
+MIT License
+
+Copyright (c) 2024 TheCodeSlinger
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+...
 

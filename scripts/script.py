@@ -122,7 +122,7 @@ class FacePopState:
         # ControlNetModule should not be reset as it's likely loaded once and reused.
 
         # Reset and initialize Face Detection with default confidence_threshold
-        FacePopState.initialize_face_detection(min_confidence=FacePopState.confidence_threshold)
+        #FacePopState.initialize_face_detection(min_confidence=FacePopState.confidence_threshold)
 
     @staticmethod
     def initialize_face_detection(min_confidence=0.3):
@@ -254,7 +254,7 @@ class FacePopScript(scripts.Script):
         """
         if not is_img2img:
             return None
-    
+
         with gr.Accordion("FacePop", open=False):
             # --------------------- Basic Features ---------------------
             with gr.Group():
