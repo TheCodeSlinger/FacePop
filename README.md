@@ -254,11 +254,14 @@ FacePop utilizes pre-trained models for efficient and accurate face detection. B
 
 #### **4. How to Obtain and Integrate the Model Files**
 
+All these are already included, you don't need to go donwload them unless you want to get them directly from the source.
+
 1. **Download the Files**:
-   
-   - **deploy.prototxt**: [Download Here](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/deploy.prototxt)
-   - **res10_300x300_ssd_iter_140000.caffemodel**: [Download Here](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/res10_300x300_ssd_iter_140000.caffemodel)
-   - **MODNet**: [Download Here](https://github.com/TheCodeSlinger/FacePop/blob/main/scripts/modnet.pth)
+
+   - **deploy.prototxt**: [Download Here](https://github.com/BVLC/caffe/blob/master/models/bvlc_reference_caffenet/deploy.prototxt)
+   - **res10_300x300_ssd_iter_140000.caffemodel**: [Download Here](https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel)
+   - **MODNet**: [Repository here](https://github.com/ZHKKKe/MODNet)
+   - **MODNet: photo checkpoint**: [Download Here](https://drive.google.com/file/d/11SBrkihQhtitVLqCKPW8mdQM2T1G0LTE/view)
 
 2. **Place the Files in `\stable-diffusion-webui\extensions\FacePop\scripts\`**:
 

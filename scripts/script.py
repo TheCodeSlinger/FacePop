@@ -56,7 +56,6 @@ class FacePopState:
     auto_align_faces = True  # Flag to auto-align faces based on landmarks
     rotation_angle_threshold = 10  # New default rotation threshold (degrees)
     keep_ratio = True  # Flag to maintain aspect ratio when resizing faces
-    inpaint_mask = None  # Mask used for inpainting
     modnet_model = None  # Placeholder for MODNet model
     modnet_ref = None  # Reference to the MODNet model
     debug_path = "debug"  # Path for debug logs
@@ -105,7 +104,6 @@ class FacePopState:
         FacePopState.auto_align_faces = True  # Correct initialization
         FacePopState.rotation_angle_threshold = 10  # Reset rotation threshold
         FacePopState.keep_ratio = True  # Reset Keep Ratio to default (checked)
-        FacePopState.inpaint_mask = None
         FacePopState.modnet_model = None
         FacePopState.output_faces = True
         FacePopState.aggressive_detection = False
@@ -474,7 +472,6 @@ class FacePopScript(scripts.Script):
         FacePopState.auto_align_faces = auto_align_faces_checkbox
         FacePopState.rotation_angle_threshold = int(rotation_angle_slider)
         FacePopState.keep_ratio = keep_ratio_checkbox
-        FacePopState.inpaint_mask = p.image_mask
         FacePopState.output_faces = output_faces_checkbox
         FacePopState.aggressive_detection = aggressive_detection_checkbox
         FacePopState.upscale_to_original = upscale_to_original_source_checkbox
