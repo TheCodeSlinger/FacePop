@@ -5,3 +5,4 @@ ADetailer
 ; ignore any of these scripts during final image composite
 [final]
 ReActor
+Overlay

@@ -1,3 +1,3 @@
 # __init__.py for the FacePop extension
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

@@ -1,4 +1,5 @@
 # FacePop
+## Version 1.1.0
 
 ![FacePop Logo](resources/logo.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
@@ -77,9 +78,8 @@ By handling faces in a structured and efficient way, **FacePop** helps you achie
 - [Deny Scripts File](#deny-scripts-list)
 - [Screenshots](#screenshots)
 - [Dependencies](#dependencies)
-- [Contributing](#contributing)
 - [License](#license)
-- [Acknowledgements](#acknowledgements)
+- [Updates](#updates)
 
 ## Features
 
@@ -261,15 +261,13 @@ All these are already included, you don't need to go donwload them unless you wa
    - **deploy.prototxt**: [Download Here](https://github.com/BVLC/caffe/blob/master/models/bvlc_reference_caffenet/deploy.prototxt)
    - **res10_300x300_ssd_iter_140000.caffemodel**: [Download Here](https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel)
    - **MODNet**: [Repository here](https://github.com/ZHKKKe/MODNet)
-   - **MODNet: photo checkpoint**: [Download Here](https://drive.google.com/file/d/11SBrkihQhtitVLqCKPW8mdQM2T1G0LTE/view)
+   - **MODNet photo checkpoint**: [Download Here](https://drive.google.com/file/d/11SBrkihQhtitVLqCKPW8mdQM2T1G0LTE/view)
 
 2. **Place the Files in `\stable-diffusion-webui\extensions\FacePop\scripts\`**:
 
 ---
 
 ## **License**
-
-FacePop is licensed under the [MIT License](LICENSE). See the [LICENSE](LICENSE) file for more details.
 
 ```text
 MIT License
@@ -279,3 +277,8 @@ Copyright (c) 2024 TheCodeSlinger
 Permission is hereby granted, free of charge, to any person obtaining a copy
 ...
 
+---
+## **Updates**
+
+[09-19-2024] Original release (version 1.0.0)
+[09-23-2024] Bug Fixes and Feature integrations (version 1.1.0)

@@ -16,7 +16,7 @@ from modnet.models.modnet import MODNet
 #import pprint # Only needed if you uncomment the p dump code for debugging output
 
 # Import the process_images function
-from modules.processing import process_images
+from modules.processing import process_images, StableDiffusionProcessingImg2Img
 
 # Initialize Mediapipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.9)
@@ -27,7 +27,7 @@ class FacePopState:
     processing parameters, and model references.
     """
     # Static variables
-    original_image = None  # The original input image being processed
+    original_image = np.zeros((512, 512, 3), dtype=np.uint8)  # The original input image being processed
     is_processing_faces = False  # Flag indicating if face processing is currently ongoing
     first_p = None  # The first processing object, possibly storing pipeline parameters
     first_cn_list = None  # List related to ControlNet processing
@@ -72,12 +72,13 @@ class FacePopState:
     face_samping_steps = 40 # seperate face sampling steps
     face_cfg_scale = 7.0 # seperate face CFG scale
     face_denoising = 0.4 # seperate face denoising strength
+    ssd_model_loaded = False
 
     @staticmethod
     def reset():
         #print('[FacePop Debug] [[[[[[[ RESET() ]]]]]]]')
         """Reset all static variables to their default state."""
-        FacePopState.original_image = None
+        FacePopState.original_image = np.zeros((512, 512, 3), dtype=np.uint8)
         FacePopState.is_processing_faces = False
         FacePopState.first_p = None
         FacePopState.first_cn_list = None
@@ -118,7 +119,7 @@ class FacePopState:
         FacePopState.face_denoising = 0.4
         # FacePopState.preview_images = []
         # ControlNetModule should not be reset as it's likely loaded once and reused.
-
+        # FacePopState.ssd_model_loaded = False
         # Reset and initialize Face Detection with default confidence_threshold
         #FacePopState.initialize_face_detection(min_confidence=FacePopState.confidence_threshold)
 
@@ -191,7 +192,20 @@ class FacePopState:
         print("MODNet model loaded successfully.")
 
 class FacePopScript(scripts.Script):
+
     def __init__(self):
+        super().__init__()
+        self.debug = False
+
+    # Extension title in the menu UI
+    def title(self):
+        return "FacePop"
+
+    # Show in Img2Img only
+    def show(self, is_img2img):
+        return scripts.AlwaysVisible
+        
+    def load_ssd_model(self):
         """
         Initializes the FacePopScript class by loading essential models, including ControlNet if available.
 
@@ -203,7 +217,11 @@ class FacePopScript(scripts.Script):
         :return: 
             None. This method initializes the class instance and prepares necessary resources for face processing.
         """
-        super().__init__()
+        if FacePopState.ssd_model_loaded:
+            return
+
+        FacePopState.ssd_model_loaded = True
+
         # Define the path to the model files
         script_dir = os.path.dirname(__file__)
         model_prototxt = os.path.join(script_dir, "deploy.prototxt")
@@ -217,8 +235,6 @@ class FacePopScript(scripts.Script):
             print(f"[FacePop Debug] Failed to load OpenCV SSD model: {e}")
             self.net = None
 
-        self.debug = False
-
         # Dynamically import ControlNet and store it in the static state
         if FacePopState.controlNetModule is None:
             try:
@@ -227,14 +243,6 @@ class FacePopScript(scripts.Script):
             except ImportError:
                 FacePopState.controlNetModule = None
                 print("[FacePop Debug] NO EXTERNAL CODE FOUND")
-
-    # Extension title in the menu UI
-    def title(self):
-        return "FacePop"
-
-    # Show in Img2Img only
-    def show(self, is_img2img):
-        return scripts.AlwaysVisible
 
     def ui(self, is_img2img):
         """
@@ -269,9 +277,9 @@ class FacePopScript(scripts.Script):
     
                 # Padding and Maintain Aspect Ratio in one row
                 with gr.Row():
-                    padding_slider = gr.Slider(minimum=0, maximum=1048, step=1, label="Padding (px)", value=128, interactive=True)  # Padding
+                    padding_slider = gr.Slider(minimum=0, maximum=100, step=1, label="Padding %", value=35, interactive=True)  # Padding
                     keep_ratio_checkbox = gr.Checkbox(label="Maintain Aspect Ratio", value=True, interactive=True)  # Keep aspect ratio
-    
+
                 # Detection Confidence Threshold and Maximum Faces to Process in one row
                 with gr.Row():
                     confidence_slider = gr.Slider(minimum=0.1, maximum=1.0, step=0.05, label="Detection Confidence Threshold", value=0.5, interactive=True)  # Confidence threshold
@@ -337,11 +345,13 @@ class FacePopScript(scripts.Script):
         ]
 
 
-    def process(self, p, enabled, modnet_checkbox, aggressive_detection_checkbox, scale_width_slider, scale_height_slider, padding_slider,
-                      keep_ratio_checkbox, confidence_slider, max_faces_slider, debug, output_faces_checkbox, auto_align_faces_checkbox,
-                      upscale_to_original_source_checkbox, enhancement_dropdown, rotation_angle_slider, output_path,
-                      separate_face_processing_checkbox, sampling_steps_slider, cfg_scale_slider, denoising_strength_slider):
-
+    def process(self, p, enabled=True, modnet_checkbox=True, aggressive_detection_checkbox=True,
+                scale_width_slider=1.0, scale_height_slider=1.0, padding_slider=0,
+                keep_ratio_checkbox=True, confidence_slider=0.5, max_faces_slider=5,
+                debug=False, output_faces_checkbox=True, auto_align_faces_checkbox=True,
+                upscale_to_original_source_checkbox=True, enhancement_dropdown="None",
+                rotation_angle_slider=0.0, output_path="", separate_face_processing_checkbox=False,
+                sampling_steps_slider=20, cfg_scale_slider=7.0, denoising_strength_slider=0.75):
     # Method implementation
         """
         Main processing method that handles face detection, enhancement, and other operations.
@@ -361,6 +371,9 @@ class FacePopScript(scripts.Script):
             None. This method modifies the `processed.images` attribute by replacing it with the final 
             composite images stored in `FacePopState.preview_images`.
         """
+        if not isinstance(p, StableDiffusionProcessingImg2Img):
+            return
+
         # Initialize the debug attribute
         self.debug = debug
 
@@ -377,8 +390,8 @@ class FacePopScript(scripts.Script):
 
         # If the extension is not enabled, do nothing
         if not enabled:
-            if self.debug:
-                print(f"[FacePop Debug] Extension not enabled. Exiting 'process' method.")
+            #if self.debug:
+            #    print(f"[FacePop Debug] Extension not enabled. Exiting 'process' method.")
             FacePopState.enabled = False
             return
         if not FacePopState.enabled:
@@ -388,6 +401,9 @@ class FacePopScript(scripts.Script):
             FacePopState.started = True
             if self.debug:
                 print("[FacePop Debug] ------------------------- STARTING FACEPOP -------------------------")
+
+                self.load_ssd_model() # Load SSD Model, if not already loaded
+
             FacePopState.reset() # reset on startup just to be sure
             ## Load deny scripts dictionary
             scripts_deny_file = os.path.join(os.path.dirname(__file__), "deny_scripts_list.txt")
@@ -481,7 +497,7 @@ class FacePopScript(scripts.Script):
         FacePopState.face_denoising = denoising_strength_slider
 
         # Capture the actual original image dimensions before any processing
-        if FacePopState.original_image is None:
+        if FacePopState.proc_width == 0:
             FacePopState.original_image = p.init_images[0].copy()  # Make a true copy of the original image
             FacePopState.original_image_size = FacePopState.original_image.size  # Store original size (width, height)
             FacePopState.proc_width = p.width
@@ -604,11 +620,13 @@ class FacePopScript(scripts.Script):
 
             x, y, w, h = face_data['bbox']
 
+            padding = int(w * (FacePopState.padding * .01))
+
             # Apply padding and ensure the crop stays within image bounds
-            x_start = max(x - FacePopState.padding, 0)
-            y_start = max(y - FacePopState.padding, 0)
-            x_end = min(x + w + FacePopState.padding, image.shape[1])
-            y_end = min(y + h + FacePopState.padding, image.shape[0])
+            x_start = max(x - padding, 0)
+            y_start = max(y - padding, 0)
+            x_end = min(x + w + padding, image.shape[1])
+            y_end = min(y + h + padding, image.shape[0])
 
             face = image[y_start:y_end, x_start:x_end]
 
@@ -617,7 +635,7 @@ class FacePopScript(scripts.Script):
                     print(f"[FacePop Debug] Inpainting mask detected.")
 
                 # Check for face overlap with mask
-                inpaint_region, cropped_mask = self.is_face_in_inpaint_region((x, y, w, h), mask)
+                inpaint_region, cropped_mask = self.is_face_in_inpaint_region((x_start, y_start, x_end, y_end), mask)
 
                 # Correct logic to check if face is in the inpainting region
                 if not inpaint_region:  # Skip face if it doesn't meet the 20% threshold
@@ -628,12 +646,16 @@ class FacePopScript(scripts.Script):
                     dummy_face = create_dummy_image(w, h)
 
                     # Ensure processed_faces is initialized properly
-                    if len(processed_faces) == 0:
-                        processed_faces.append([])  # Initialize for non-batch mode
-                    elif len(processed_faces) <= iface:
-                        processed_faces.append([])  # Initialize for batch mode if necessary
-
-                    processed_faces[iface].append((dummy_face, (x, y, w, h), 'skipped'))  # Mark as skipped
+                    #if len(processed_faces) == 0:
+                    #    processed_faces.append([])  # Initialize for non-batch mode
+                    #elif len(processed_faces) <= iface:
+                    #    processed_faces.append([])  # Initialize for batch mode if necessary
+                        
+                    # Ensure processed_faces is initialized properly
+                    while len(processed_faces) <= iface:
+                        processed_faces.append([])
+                
+                    processed_faces[iface].append((dummy_face, (x_start, y_start, x_end, y_end), 'skipped'))  # Mark as skipped
 
                     # Adjust countdown
                     continue  # Skip this face if it's outside the inpainting region
@@ -664,7 +686,8 @@ class FacePopScript(scripts.Script):
             original_angle = 0  # Default angle
             if FacePopState.auto_align_faces:
                 # Detect landmarks using Mediapipe's Face Mesh on the resized face
-                landmarks = self.detect_landmarks(face_resized)
+                landmarks, eyes_mouth_mask = self.detect_landmarks(face_resized)
+
                 angle = self.calculate_rotation_angle(landmarks)
                 if angle != 0:
                     total_rotation_angle = angle
@@ -675,6 +698,8 @@ class FacePopScript(scripts.Script):
 
                     # Rotate the face if necessary
                     face_resized = self.rotate_image(face_resized, total_rotation_angle, True)
+                    if eyes_mouth_mask is not None:
+                        eyes_mouth_mask = self.rotate_image(eyes_mouth_mask, total_rotation_angle)
                     original_angle = -total_rotation_angle  # Save the inverse angle for final overlay
 
                     # **NEW CODE STARTS HERE**
@@ -713,6 +738,12 @@ class FacePopScript(scripts.Script):
                 if self.debug:
                     print(f"[FacePop Debug] Face #{iface+1} skipped alignment.")
 
+            if eyes_mouth_mask is not None:
+                # Save or use the mask as needed
+                # For example, save the mask for debugging
+                debug_output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_debug_face_{iface+1}_eyes_mouth_mask.png")
+                cv2.imwrite(debug_output_path, eyes_mouth_mask)
+
             # Apply the selected enhancement method
             if FacePopState.enhancement_method == "Unsharp Mask":
                 face_resized = self.apply_unsharp_mask(face_resized)
@@ -733,7 +764,13 @@ class FacePopScript(scripts.Script):
             p_copy.height = new_height
             p_copy.batch_size = 1  # Process one face at a time
             p_copy.do_not_save_samples = True  # Prevents the default saving behavior
-            
+
+            p_copy.fp_x_start = x_start
+            p_copy.fp_y_start = y_start
+            p_copy.fp_x_end = x_end
+            p_copy.fp_y_end = y_end
+            p_copy.fp_angle = angle
+
             if FacePopState.face_seperate_proc:
                 p_copy.steps = FacePopState.face_samping_steps
                 p_copy.cfg_scale = FacePopState.face_cfg_scale
@@ -884,6 +921,8 @@ class FacePopScript(scripts.Script):
         :return: None. Modifies the `processed.images` attribute by replacing it with the final composite 
                  images stored in `FacePopState.preview_images`.
         """
+        if not isinstance(p, StableDiffusionProcessingImg2Img):
+            return
         if self.debug:
             print("[FacePop Debug] Entered 'postprocess' method")
 
@@ -954,14 +993,20 @@ class FacePopScript(scripts.Script):
                     if self.debug:
                         print("[FacePop Debug] Final pass: No combined_mask found, skipping mask assignment.")
 
-                final_mask = self.combine_masks(p.image_mask, face_mask_pil)
-                final_mask = final_mask.convert('L')
+                if hasattr(p, 'image_mask') and p.image_mask is not None:
+                    final_mask = self.combine_masks(p.image_mask, face_mask_pil)
+                else:
+                    # Handle case for txt2img where no image_mask is present
+                    print("No image_mask present, skipping mask combination.")
+                    final_mask = face_mask_pil  # Use only the face mask in this case
 
                 # Resize the final mask (PIL) to proc_width and proc_height
                 if final_mask is not None:
                     final_mask = final_mask.resize((FacePopState.proc_width, FacePopState.proc_height), Image.LANCZOS)
                     if self.debug:
-                        print(f"[FacePop Debug] Final pass: Resized final_mask to ({FacePopState.proc_width}, {FacePopState.proc_height})")
+                        #print(f"[FacePop Debug] Final pass: Resized final_mask to ({FacePopState.proc_width}, {FacePopState.proc_height})")
+                        #output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_debug_mask_inpaint_original.png")
+                        #p.image_mask.save(output_path)
                         output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_debug_mask_inpaint.png")
                         final_mask.save(output_path)
                         print(f"[FacePop Debug] Final pass: Saving combined_mask with inpaint mask. {output_path}")
@@ -1135,133 +1180,150 @@ class FacePopScript(scripts.Script):
     def detect_faces(self, image, p):
         """
         Detects faces in an input image using Mediapipe's Face Detection and optionally falls back to OpenCV's SSD face detection.
-        Ensures that detected faces fit within the image bounds and supports aggressive detection by rotating the image.
-        Stops detecting once the maximum number of faces (FacePopState.max_faces) is reached unless set to 0 (unlimited).
-    
-        :param image: The input image as a NumPy array. It can be in BGR, BGRA, or grayscale format.
-        :param p: The processing object from AUTOMATIC1111's pipeline, containing image data and other parameters.
-        :return: A list of dictionaries, each containing the bounding box coordinates (x, y, width, height),
-                 confidence score, and rotation angle for each detected face.
-                 Example:
-                 [
-                     {
-                         'bbox': (x_start, y_start, box_width, box_height),
-                         'confidence': confidence_score,
-                         'rotation_angle': rotation_angle_degrees
-                     },
-                     ...
-                 ]
+        Uses a mask image to prevent detecting the same face multiple times.
         """
         if self.debug:
             print(f"[FacePop Debug] Entered 'detect_faces' method.")
-        
-        # Convert image to RGB as Mediapipe requires RGB input
-        if image.shape[2] == 4:
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-        else:
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # Initialize Mediapipe Face Detection if not already
-        if FacePopState.face_detection is None:
-            FacePopState.initialize_face_detection(min_confidence=FacePopState.confidence_threshold)
-        
-        # Run Mediapipe Face Detection
-        mediapipe_faces = FacePopState.face_detection.process(image_rgb)
-        
+    
+        # Initialize the mask image (black image)
+        mask_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+    
+        # Initialize the list to store all accepted faces
         all_faces = []
-        
-        # Process Mediapipe detections
-        if mediapipe_faces.detections:
-            for detection in mediapipe_faces.detections:
-                # Extract bounding box
-                bboxC = detection.location_data.relative_bounding_box
-                ih, iw, _ = image.shape
-                x_start = int(bboxC.xmin * iw)
-                y_start = int(bboxC.ymin * ih)
-                box_width = int(bboxC.width * iw)
-                box_height = int(bboxC.height * ih)
     
-                # Confidence score
-                confidence = detection.score[0]
+        # Define detection configurations
+        detection_configs = []
     
-                # Append face data
-                all_faces.append({
-                    'bbox': (x_start, y_start, box_width, box_height),
-                    'confidence': confidence,
-                    'rotation_angle': 0  # Placeholder, will be updated if needed
-                })
+        # Add initial detection methods
+        detection_configs.append({'method': 'mediapipe', 'rotation': 0})
+        detection_configs.append({'method': 'opencv', 'rotation': 0})
     
-                if self.debug:
-                    print(f"[FacePop Debug] Mediapipe detected face at ({x_start}, {y_start}, {box_width}, {box_height}) with confidence {confidence:.2f}")
+        # If aggressive detection is enabled, add rotated detection configurations
+        if FacePopState.aggressive_detection:
+            rotated_angles = [90, 180, 270]
+            for angle in rotated_angles:
+                detection_configs.append({'method': 'mediapipe', 'rotation': angle})
+                detection_configs.append({'method': 'opencv', 'rotation': angle})
     
-                # Stop detecting faces if the maximum number of faces is reached
-                if FacePopState.max_faces > 0 and len(all_faces) >= FacePopState.max_faces:
-                    if self.debug:
-                        print(f"[FacePop Debug] Maximum number of faces ({FacePopState.max_faces}) reached. Stopping detection.")
-                    break
+        # Loop through each detection configuration
+        for config in detection_configs:
+            method = config['method']
+            rotation_angle = config['rotation']
     
-        # Determine if fallback detection is needed
-        use_opencv = False
-        if not mediapipe_faces.detections and (FacePopState.max_faces == 0 or len(all_faces) < FacePopState.max_faces):
-            if self.debug:
-                print("[FacePop Debug] Mediapipe did not detect any faces. Initiating OpenCV fallback detection.")
-            use_opencv = True
-        elif FacePopState.aggressive_detection:
-            if self.debug:
-                print("[FacePop Debug] Aggressive detection enabled. Initiating OpenCV detection on rotated images.")
-            use_opencv = True
+            # Rotate the image and mask_image if rotation_angle != 0
+            if rotation_angle != 0:
+                rotated_image = self.rotate_image_cv(image, rotation_angle)
+                rotated_mask_image = self.rotate_image_cv(mask_image, rotation_angle, is_mask=True)
+            else:
+                rotated_image = image.copy()
+                rotated_mask_image = mask_image.copy()
     
-        # If needed, perform OpenCV face detection
-        if use_opencv:
-            opencv_faces = self.detect_faces_opencv(image, FacePopState.confidence_threshold)
-            all_faces.extend(opencv_faces)
+            # Perform detection
+            if method == 'mediapipe':
+                # Convert image to RGB as Mediapipe requires RGB input
+                if rotated_image.shape[2] == 4:
+                    image_rgb = cv2.cvtColor(rotated_image, cv2.COLOR_RGBA2RGB)
+                else:
+                    image_rgb = cv2.cvtColor(rotated_image, cv2.COLOR_BGR2RGB)
     
-            # Stop detecting faces if the maximum number of faces is reached
-            if FacePopState.max_faces > 0 and len(all_faces) >= FacePopState.max_faces:
-                if self.debug:
-                    print(f"[FacePop Debug] Maximum number of faces ({FacePopState.max_faces}) reached. Stopping OpenCV detection.")
-                return all_faces[:FacePopState.max_faces]
+                # Initialize Mediapipe Face Detection if not already
+                if FacePopState.face_detection is None:
+                    FacePopState.initialize_face_detection(min_confidence=FacePopState.confidence_threshold)
     
-            # If aggressive_detection is enabled, rotate the image and detect faces
-            if FacePopState.aggressive_detection:
-                rotated_angles = [90, 180, 270]
-                for angle in rotated_angles:
-                    if FacePopState.max_faces > 0 and len(all_faces) >= FacePopState.max_faces:
-                        if self.debug:
-                            print(f"[FacePop Debug] Maximum number of faces ({FacePopState.max_faces}) reached during aggressive detection. Stopping rotation.")
-                        break
+                # Run Mediapipe Face Detection
+                mediapipe_faces = FacePopState.face_detection.process(image_rgb)
     
-                    if self.debug:
-                        print(f"[FacePop Debug] Rotating image by {angle} degrees for aggressive detection.")
-                    rotated_image = self.rotate_image_cv(image, angle)
-                    detected_rotated_faces = self.detect_faces_opencv(rotated_image, FacePopState.confidence_threshold)
+                # Process Mediapipe detections
+                if mediapipe_faces.detections:
+                    for detection in mediapipe_faces.detections:
+                        # Extract bounding box
+                        bboxC = detection.location_data.relative_bounding_box
+                        ih, iw, _ = rotated_image.shape
+                        x_start = int(bboxC.xmin * iw)
+                        y_start = int(bboxC.ymin * ih)
+                        box_width = int(bboxC.width * iw)
+                        box_height = int(bboxC.height * ih)
     
-                    if detected_rotated_faces:
-                        if self.debug:
-                            print(f"[FacePop Debug] Detected {len(detected_rotated_faces)} faces in rotated image ({angle} degrees).")
-                        # Rotate bounding boxes back to original image orientation
-                        for face in detected_rotated_faces:
-                            rotated_bbox = face['bbox']
-                            rotated_face = self.rotate_bounding_box(rotated_bbox, angle, image.shape[:2])
-                            all_faces.append(rotated_face)
+                        # Confidence score
+                        confidence = detection.score[0]
+    
+                        # Check for overlap
+                        bbox = (x_start, y_start, box_width, box_height)
+                        if not self.is_overlap(bbox, rotated_mask_image):
+                            # Accept detection
+                            all_faces.append({
+                                'bbox': bbox,
+                                'confidence': confidence,
+                                'rotation_angle': rotation_angle
+                            })
+                            # Update mask with ellipse
+                            rotated_mask_image = self.update_mask(bbox, rotated_mask_image)
+                        else:
+                            if self.debug:
+                                print(f"[FacePop Debug] Skipping overlapping face at ({x_start}, {y_start}, {box_width}, {box_height})")
     
                         # Stop detecting faces if the maximum number of faces is reached
                         if FacePopState.max_faces > 0 and len(all_faces) >= FacePopState.max_faces:
                             if self.debug:
-                                print(f"[FacePop Debug] Maximum number of faces ({FacePopState.max_faces}) reached during aggressive detection. Stopping rotation.")
+                                print(f"[FacePop Debug] Maximum number of faces ({FacePopState.max_faces}) reached. Stopping detection.")
                             break
     
+            elif method == 'opencv':
+                # Detect faces using OpenCV
+                opencv_faces = self.detect_faces_opencv(rotated_image, FacePopState.confidence_threshold)
+                for face in opencv_faces:
+                    x_start, y_start, box_width, box_height = face['bbox']
+                    confidence = face['confidence']
+    
+                    # Check for overlap
+                    bbox = (x_start, y_start, box_width, box_height)
+                    if not self.is_overlap(bbox, rotated_mask_image):
+                        # Accept detection
+                        all_faces.append({
+                            'bbox': bbox,
+                            'confidence': confidence,
+                            'rotation_angle': rotation_angle
+                        })
+                        # Update mask with ellipse
+                        rotated_mask_image = self.update_mask(bbox, rotated_mask_image)
                     else:
                         if self.debug:
-                            print(f"[FacePop Debug] No faces detected in rotated image ({angle} degrees).")
+                            print(f"[FacePop Debug] Skipping overlapping face at ({x_start}, {y_start}, {box_width}, {box_height})")
     
-        # Perform Non-Maximum Suppression to eliminate duplicate detections
-        final_faces = self.non_max_suppression(all_faces, iou_threshold=0.3)
+                    # Stop detecting faces if the maximum number of faces is reached
+                    if FacePopState.max_faces > 0 and len(all_faces) >= FacePopState.max_faces:
+                        if self.debug:
+                            print(f"[FacePop Debug] Maximum number of faces ({FacePopState.max_faces}) reached. Stopping detection.")
+                        break
+    
+            # After processing, rotate mask_image back to original orientation if necessary
+            if rotation_angle != 0:
+                mask_image = self.rotate_image_cv(rotated_mask_image, -rotation_angle, is_mask=True)
+            else:
+                mask_image = rotated_mask_image.copy()
+    
+        # After all detections, map bounding boxes back to original orientation if they were rotated
+        final_faces = []
+        for face in all_faces:
+            bbox = face['bbox']
+            rotation_angle = face['rotation_angle']
+            if rotation_angle != 0:
+                # Rotate bbox back to original orientation
+                rotated_bbox = self.rotate_bounding_box(bbox, -rotation_angle, image.shape[:2])
+                face['bbox'] = rotated_bbox
+                face['rotation_angle'] = 0  # Now in original orientation
+            final_faces.append(face)
+    
+        # If debug is enabled, save the mask image to the debug folder
+        if self.debug:
+            # Ensure the debug path exists
+            debug_output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_face_detection_mask.png")
+            cv2.imwrite(debug_output_path, mask_image)
+            print(f"[FacePop Debug] Saved face detection mask image at {debug_output_path}")
     
         if self.debug:
             print(f"[FacePop Debug] Exiting 'detect_faces' method with {len(final_faces)} faces detected.")
-        
-        # Return only the maximum number of faces if applicable
+    
         return final_faces[:FacePopState.max_faces] if FacePopState.max_faces > 0 else final_faces
 
 
@@ -1345,118 +1407,127 @@ class FacePopScript(scripts.Script):
                 print(f"[FacePop Debug] Exception during OpenCV face detection: {e}")
             return []
 
-    def rotate_image_cv(self, image, angle):
+    def rotate_image_cv(self, image, angle, is_mask=False):
         """
-        Rotates an image by the given angle using OpenCV.
-    
-        :param image: Input image as a NumPy array (BGR format).
-        :param angle: Angle in degrees to rotate the image clockwise.
-        :return: Rotated image as a NumPy array.
+        Rotates an image or mask by the given angle using OpenCV.
+        If is_mask is True, uses nearest neighbor interpolation to preserve mask values.
         """
         if angle == 0:
             return image.copy()
-    
+
         (h, w) = image.shape[:2]
         center = (w // 2, h // 2)
-    
+
         # Get the rotation matrix
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    
+
+        # Choose interpolation method
+        if is_mask:
+            # Use nearest neighbor interpolation for masks to preserve binary values
+            interp_method = cv2.INTER_NEAREST
+        else:
+            interp_method = cv2.INTER_LINEAR
+
         # Perform the rotation
         rotated = cv2.warpAffine(image, M, (w, h),
-                                 flags=cv2.INTER_LINEAR,
+                                 flags=interp_method,
                                  borderMode=cv2.BORDER_CONSTANT,
-                                 borderValue=(0, 0, 0))  # Black border
-    
-        # Ensure the rotated image has 3 channels
-        if rotated.ndim == 2:
-            rotated = cv2.cvtColor(rotated, cv2.COLOR_GRAY2BGR)
-            if self.debug:
-                print("[FacePop Debug] Converted rotated grayscale image to BGR.")
-        elif rotated.ndim == 3:
-            if rotated.shape[2] == 4:
-                rotated = cv2.cvtColor(rotated, cv2.COLOR_BGRA2BGR)
-                if self.debug:
-                    print("[FacePop Debug] Converted rotated BGRA image to BGR.")
-            elif rotated.shape[2] == 3:
-                # Already BGR
-                pass
-            else:
-                # Unexpected number of channels, convert to BGR
-                rotated = cv2.cvtColor(rotated, cv2.COLOR_GRAY2BGR)
-                if self.debug:
-                    print(f"[FacePop Debug] Unexpected number of channels ({rotated.shape[2]}) in rotated image, converted to BGR.")
-        else:
-            # Unexpected image format
-            print(f"[FacePop Debug] Unexpected rotated image dimensions ({rotated.ndim}), skipping detection.")
-            return rotated
-    
+                                 borderValue=0)
+
         return rotated
+        
+    def is_overlap(self, bbox, mask_image, overlap_threshold=0.2):
+        """
+        Checks if the bounding box overlaps with any existing detections in the mask_image.
+        Returns True if the overlap exceeds the overlap_threshold.
+        """
+        x_start, y_start, w, h = bbox
+        x_end = x_start + w
+        y_end = y_start + h
+    
+        # Ensure coordinates are within the mask bounds
+        mask_height, mask_width = mask_image.shape[:2]
+        x_start = max(0, x_start)
+        y_start = max(0, y_start)
+        x_end = min(mask_width, x_end)
+        y_end = min(mask_height, y_end)
+    
+        # Get the mask region that corresponds to the bbox
+        mask_area = mask_image[y_start:y_end, x_start:x_end]
+    
+        # Calculate the percentage of the bbox area that is already white in mask_image
+        total_pixels = mask_area.size
+        overlapping_pixels = np.count_nonzero(mask_area)
+    
+        overlap_ratio = overlapping_pixels / total_pixels
+    
+        return overlap_ratio > overlap_threshold
 
-    def rotate_bounding_box(self, bbox, angle, original_shape):
+    def update_mask(self, bbox, mask_image):
         """
-        Rotates a bounding box back to the original image orientation.
-    
-        :param bbox: Tuple (x_start, y_start, width, height) representing the bounding box in the rotated image.
-        :param angle: The angle in degrees by which the image was rotated clockwise.
-        :param original_shape: Tuple (height, width) of the original image.
-        :return: Adjusted bounding box as a dictionary similar to OpenCV detections.
+        Updates the mask_image by drawing a white ellipse (oval) over the bounding box area.
         """
-        (x, y, w, h) = bbox
-        (ih, iw) = original_shape
-    
-        # Calculate the center of the image
-        center = (iw / 2, ih / 2)
+        x_start, y_start, w, h = bbox
+        x_end = x_start + w
+        y_end = y_start + h
 
-        # Coordinates of the bounding box corners
-        corners = np.array([
-            [x, y],
-            [x + w, y],
-            [x + w, y + h],
-            [x, y + h]
-        ])
-    
-        # Convert angle to radians and compute the rotation matrix
-        angle_rad = np.deg2rad(-angle)  # Negative for counter rotation
-        rotation_matrix = np.array([
-            [np.cos(angle_rad), -np.sin(angle_rad)],
-            [np.sin(angle_rad), np.cos(angle_rad)]
-        ])
-    
-        # Apply the rotation to each corner
-        rotated_corners = np.dot(corners - center, rotation_matrix) + center
-    
-        # Get the new bounding box from rotated corners
-        x_coords, y_coords = zip(*rotated_corners)
-        x_min = max(0, int(min(x_coords)))
-        y_min = max(0, int(min(y_coords)))
-        x_max = min(iw, int(max(x_coords)))
-        y_max = min(ih, int(max(y_coords)))
-    
-        new_w = x_max - x_min
-        new_h = y_max - y_min
-    
-        # Calculate confidence score as placeholder (could be adjusted if necessary)
-        # Here, we assign the same confidence as the rotated detection
-        confidence = 0.99  # High confidence since it's a rotated detection
-    
-        return {
-            'bbox': (x_min, y_min, new_w, new_h),
-            'confidence': confidence,
-            'rotation_angle': angle  # Keep track of the rotation
-        }
+        # Ensure coordinates are within the mask bounds
+        mask_height, mask_width = mask_image.shape[:2]
+        x_start = max(0, x_start)
+        y_start = max(0, y_start)
+        x_end = min(mask_width, x_end)
+        y_end = min(mask_height, y_end)
 
-    def non_max_suppression(self, detections, iou_threshold=0.3):
+        # Calculate the center and axes lengths for the ellipse
+        center_x = int((x_start + x_end) / 2)
+        center_y = int((y_start + y_end) / 2)
+        axes_length = (int(w / 2), int(h / 2))  # (major_axis_length, minor_axis_length)
+
+        # Draw a filled white ellipse on the mask_image
+        cv2.ellipse(mask_image, (center_x, center_y), axes_length,
+                    angle=0, startAngle=0, endAngle=360,
+                    color=255, thickness=-1)
+
+        return mask_image
+
+    def rotate_bounding_box(self, bbox, angle, image_shape):
         """
-        Perform Non-Maximum Suppression to eliminate duplicate detections.
+        Rotates a bounding box by the given angle around the center of the image.
+        """
+        x, y, w, h = bbox
+        x_center = x + w / 2
+        y_center = y + h / 2
+
+        (img_h, img_w) = image_shape[:2]
+        center = (img_w / 2, img_h / 2)
     
-        :param detections: List of detections with 'bbox' and 'confidence'.
-        :param iou_threshold: IoU threshold for suppression.
-        :return: List of detections after NMS.
-        """
+        # Convert angle to radians and invert for rotation back to original
+        angle_rad = np.deg2rad(angle)
+    
+        # Shift bbox center to origin
+        x_shifted = x_center - center[0]
+        y_shifted = y_center - center[1]
+    
+        # Apply rotation matrix
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+        x_rotated = x_shifted * cos_a - y_shifted * sin_a
+        y_rotated = x_shifted * sin_a + y_shifted * cos_a
+    
+        # Shift bbox center back
+        x_rotated += center[0]
+        y_rotated += center[1]
+    
+        # Calculate new top-left corner
+        x_new = int(x_rotated - w / 2)
+        y_new = int(y_rotated - h / 2)
+    
+        return (x_new, y_new, w, h)
+
+    def non_max_suppression(self, detections, iou_threshold=0.5):
         if len(detections) == 0:
             return []
-
+    
         # Extract bounding boxes and confidence scores
         boxes = np.array([det['bbox'] for det in detections])
         confidences = np.array([det['confidence'] for det in detections])
@@ -1464,12 +1535,12 @@ class FacePopScript(scripts.Script):
         # Convert boxes to x1, y1, x2, y2 format
         x1 = boxes[:, 0]
         y1 = boxes[:, 1]
-        x2 = x1 + boxes[:, 2]
-        y2 = y1 + boxes[:, 3]
+        x2 = x1 + boxes[:, 2]  # x2 = x1 + width
+        y2 = y1 + boxes[:, 3]  # y2 = y1 + height
     
-        # Compute the area of the bounding boxes and sort by confidence scores
-        areas = (x2 - x1 + 1) * (y2 - y1 + 1)
-        order = confidences.argsort()[::-1]
+        # Compute the area of the bounding boxes
+        areas = (x2 - x1) * (y2 - y1)
+        order = confidences.argsort()[::-1]  # Sort by confidence
     
         keep = []
     
@@ -1482,20 +1553,16 @@ class FacePopScript(scripts.Script):
             xx2 = np.minimum(x2[i], x2[order[1:]])
             yy2 = np.minimum(y2[i], y2[order[1:]])
     
-            # Compute the width and height of the overlap
-            w = np.maximum(0.0, xx2 - xx1 + 1)
-            h = np.maximum(0.0, yy2 - yy1 + 1)
+            w = np.maximum(0.0, xx2 - xx1)
+            h = np.maximum(0.0, yy2 - yy1)
     
-            # Compute the ratio of overlap (IoU)
             inter = w * h
-            ovr = inter / (areas[i] + areas[order[1:]] - inter)
+            union = areas[i] + areas[order[1:]] - inter
+            iou = inter / union
     
-            # Indices of boxes that have IoU less than the threshold
-            inds = np.where(ovr <= iou_threshold)[0]
-    
-            # Update the order array
+            inds = np.where(iou <= iou_threshold)[0]
             order = order[inds + 1]
-
+    
         return keep
 
     def overlay_faces_on_image(self, base_image, processed_faces):
@@ -1591,7 +1658,8 @@ class FacePopScript(scripts.Script):
                     print(f"[FacePop Debug] Skipped Gaussian blur for alpha channel for face #{index+1}")
 
             # **Step 2**: Generate the radial alpha mask with padding and feathering
-            alpha_radial = self.generate_alpha_mask(base_w, base_h, FacePopState.padding, 10)
+            padding = int(w * (FacePopState.padding * .01))
+            alpha_radial = self.generate_alpha_mask(base_w, base_h, padding, 10)
 
             # **Step 3**: Combine the face's alpha channel with the radial mask multiplicatively
             combined_alpha = alpha_face_smoothed * alpha_radial
@@ -1969,28 +2037,36 @@ class FacePopScript(scripts.Script):
         Attempts multiple rotations if landmarks are not initially detected.
         
         :param face_image: The cropped face image as a NumPy array.
-        :return: List of (x, y) tuples representing landmarks.
+        :return: List of (x, y) tuples representing landmarks, and the eyes/mouth mask
         """
         confidence = max(0.90, FacePopState.confidence_threshold)
-
+    
         mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=True,
             max_num_faces=1,
             refine_landmarks=True,
             min_detection_confidence=confidence
         )
-
+    
         # Convert BGR to RGB as required by MediaPipe
         face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-
+    
         # Detect landmarks using MediaPipe Face Mesh
         results = mp_face_mesh.process(face_rgb)
+    
+        landmarks = []
 
         if results.multi_face_landmarks:
-            return self.extract_landmarks(results, face_image)
+            landmarks = self.extract_landmarks(results, face_image)
+        else:
+            landmarks = self.aggressive_landmark_detection(face_image)
     
-        # If no landmarks detected, attempt aggressive detection with rotations
-        return self.aggressive_landmark_detection(face_image)
+        if landmarks:
+            # Generate masks for eyes and mouth
+            eyes_mouth_mask = self.create_eyes_mouth_mask(landmarks, face_image.shape[:2])
+            return landmarks, eyes_mouth_mask
+    
+        return [], None
 
     def aggressive_landmark_detection(self, face_image):
         """
@@ -2038,7 +2114,7 @@ class FacePopScript(scripts.Script):
 
             # Lower confidence by 0.1 for the next set of rotations
             confidence -= 0.02
-        
+
         # If no landmarks detected after all attempts
         if self.debug:
             print("[FacePop Debug] No landmarks detected after aggressive detection attempts.")
@@ -2244,13 +2320,13 @@ class FacePopScript(scripts.Script):
     def combine_masks(self, p_image_mask, face_mask_pil):
         """
         Combines the primary image mask with the face-specific mask to create a unified mask for processing.
-
+    
         This method performs the following operations:
         - Converts the face-specific mask from a PIL Image to a NumPy array.
         - Ensures both masks are in the same mode and size.
-        - Combines the masks by taking the maximum value at each pixel, effectively merging the regions to be processed.
+        - Combines the masks by using a bitwise OR operation, effectively merging the regions to be processed.
         - Returns the combined mask as a PIL Image for consistency with downstream processing steps.
-
+    
         :param p_image_mask:
             The primary image mask from the processing pipeline. This is typically a grayscale image where
             white regions indicate areas to be processed (e.g., inpainting regions).
@@ -2258,30 +2334,35 @@ class FacePopScript(scripts.Script):
         :param face_mask_pil:
             The face-specific mask as a PIL Image. This mask highlights the regions around detected faces
             that require special processing, such as enhancement or background removal.
-
+    
         :return:
             A combined PIL Image mask that merges the primary image mask and the face-specific mask.
             The resulting mask ensures that both general processing areas and face-specific areas are
             appropriately handled in subsequent processing steps.
         """
         if p_image_mask is None:
+            # If there's no primary image mask, invert the face mask and return it
             face_mask_array = np.array(face_mask_pil.convert('L'))
             face_mask_inverted = cv2.bitwise_not(face_mask_array)
             combined_mask = Image.fromarray(face_mask_inverted)
         else:
+            # Ensure both masks are the same size by resizing face_mask_pil to match p_image_mask
+            if face_mask_pil.size != p_image_mask.size:
+                face_mask_pil = face_mask_pil.resize(p_image_mask.size, Image.NEAREST)
+    
             # Convert both masks to grayscale NumPy arrays
             mask1 = np.array(p_image_mask.convert('L'))  # Inpaint area (white is inpaint)
             mask2 = np.array(face_mask_pil.convert('L'))  # Face area (black should override)
-            
+    
             # Invert the face mask so black becomes white (face) and white becomes black (non-face)
             mask2_inv = cv2.bitwise_not(mask2)
     
             # Combine using bitwise AND to give precedence to the black areas in face_mask_pil
             combined = cv2.bitwise_and(mask1, mask2_inv)
-            
+    
             # Convert back to PIL Image
             combined_mask = Image.fromarray(combined)
-
+    
         return combined_mask
 
     def toggle_scripts(self, able: bool, scripts_list):
@@ -2330,6 +2411,43 @@ class FacePopScript(scripts.Script):
             print(f"[FacePop Debug] File {file_path} does not exist.")
 
         return scripts_dict
+        
+    def create_eyes_mouth_mask(self, landmarks, image_shape):
+        # Indices for facial features
+        left_eye_indices = [33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7]
+        right_eye_indices = [263, 466, 388, 387, 386, 385, 384, 398, 362, 382, 381, 380, 374, 373, 390, 249]
+        # Combined upper and lower outer lip indices
+        mouth_indices = [
+            61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,       # Upper outer lip (from left to right)
+            375, 321, 405, 314, 17, 84, 181, 91, 146               # Lower outer lip (from right to left)
+        ]
+        
+        # Combined upper and lower inner lip indices
+        mouth_inner_indices = [
+            78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308,      # Upper inner lip (from left to right)
+            324, 318, 402, 317, 14, 87, 178, 88, 95                # Lower inner lip (from right to left)
+        ]
+
+        # Extract points for each feature
+        left_eye_points = [landmarks[i] for i in left_eye_indices]
+        right_eye_points = [landmarks[i] for i in right_eye_indices]
+        mouth_points = [landmarks[i] for i in mouth_indices]
+    
+        # Create an empty mask
+        img_height, img_width = image_shape
+        mask = np.ones((img_height, img_width), dtype=np.uint8) * 255  # All white mask
+    
+        # Convert points to NumPy arrays
+        left_eye_contour = np.array(left_eye_points, dtype=np.int32)
+        right_eye_contour = np.array(right_eye_points, dtype=np.int32)
+        mouth_contour = np.array(mouth_points, dtype=np.int32)
+    
+        # Fill the polygons on the mask
+        cv2.fillPoly(mask, [left_eye_contour], 0)
+        cv2.fillPoly(mask, [right_eye_contour], 0)
+        cv2.fillPoly(mask, [mouth_contour], 0)
+    
+        return mask
 
     def postprocess_image(self, p, *args):
         if not FacePopState.enabled:
