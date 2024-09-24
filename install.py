@@ -16,4 +16,7 @@ if not launch.is_installed("opencv-contrib-python"):
     print("[FacePop Debug] OpenCV Contrib is not installed. Installing...")
     launch.run_pip("install opencv-contrib-python", "requirements for FacePop (OpenCV Contrib)")
 
-
+# Check for OpenCV Contrib package
+if not launch.is_installed("mediapipe"):
+    print("[FacePop Debug] MediaPipe is not installed. Installing...")
+    launch.run_pip("install mediapipe", "requirements for FacePop (Mediapipe)")
