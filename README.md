@@ -1,5 +1,5 @@
 # FacePop
-## Version 1.1.0
+(Version 1.1.1)
 
 ![FacePop Logo](resources/logo.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
@@ -276,9 +276,16 @@ Copyright (c) 2024 TheCodeSlinger
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 ...
-
+```
 ---
 ## **Updates**
 
-[09-19-2024] Original release (version 1.0.0)
+[09-24-2024] Fixed some Inpainting issues (version 1.1.2)
+
+[09-23-2024] Inlcuded mediapipe in installer.py (version 1.1.1)
+
 [09-23-2024] Bug Fixes and Feature integrations (version 1.1.0)
+
+[09-19-2024] Original release (version 1.0.0)
+
+

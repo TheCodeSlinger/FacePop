@@ -517,11 +517,29 @@ class FacePopScript(scripts.Script):
 
         if FacePopState.total_faces != 0:
             return
-        else:  # detect faces; this is called only on the first process
+        else:  # Detect faces; this is called only on the first process
             # Convert PIL image to NumPy array
             init_image = np.array(p.init_images[0])
-            # Perform face detection
-            FacePopState.faces = self.detect_faces(init_image, p)  # Pass 'p' here
+
+            # If an inpainting mask exists, we need to apply it to init_image
+            if p.image_mask is not None:
+                # Ensure the mask is the same size as the init_image
+                mask = np.array(p.image_mask)
+                if mask.shape[:2] != init_image.shape[:2]:
+                    mask = cv2.resize(mask, (init_image.shape[1], init_image.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+                # Create a copy of init_image to modify
+                init_image_copy = init_image.copy()
+
+                # Set areas that are black in the mask to black in the copied init_image
+                init_image_copy[mask == 0] = 0
+
+                # Perform face detection on the modified init_image
+                FacePopState.faces = self.detect_faces(init_image_copy, p)
+            else:
+                # If no mask, use the original init_image for face detection
+                FacePopState.faces = self.detect_faces(init_image, p)
+
             # Set the total number of faces to process
             FacePopState.total_faces = len(FacePopState.faces)
             print(f"[FacePop Debug] Number of faces detected: {FacePopState.total_faces}")
@@ -609,12 +627,21 @@ class FacePopScript(scripts.Script):
 
         # Convert the inpainting mask to a NumPy array (assuming p.image_mask is a PIL image)
         mask = np.array(p.image_mask) if p.image_mask else None
+        
+        # Resize the mask to match the image size (if mask is not None)
+        if mask is not None:
+            if mask.shape[:2] != image.shape[:2]:
+                if self.debug:
+                    print("[FacePop Debug] Resizing mask to match image dimensions.")
+                mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+
 
         # Create a dummy placeholder (a blank image with the same size as the face crop)
         def create_dummy_image(width, height):
             return Image.new('RGB', (width, height), color='gray')  # Dummy placeholder image
 
         cropped_mask = None
+        cropped_mask_resized = None
         for iface, face_data in enumerate(FacePopState.faces):
             FacePopState.countdown -= 1
 
@@ -635,8 +662,12 @@ class FacePopScript(scripts.Script):
                     print(f"[FacePop Debug] Inpainting mask detected.")
 
                 # Check for face overlap with mask
-                inpaint_region, cropped_mask = self.is_face_in_inpaint_region((x_start, y_start, x_end, y_end), mask)
+                inpaint_region, cropped_mask_trash = self.is_face_in_inpaint_region((x_start, y_start, x_end, y_end), mask)
 
+                cropped_mask =mask[y_start:y_end, x_start:x_end]
+
+                inpaint_region = True # Because it's broke
+                #remove  inpaint_region check. TODO: move inpaint checking to detect_faces(..add sending inpaint mask and check against that)
                 # Correct logic to check if face is in the inpainting region
                 if not inpaint_region:  # Skip face if it doesn't meet the 20% threshold
                     if self.debug:
@@ -682,6 +713,9 @@ class FacePopScript(scripts.Script):
             # **NEW STEP**: Create a copy of the resized face for blending later
             original_face_copy = face_resized.copy()
 
+            if cropped_mask is not None:
+                cropped_mask_resized = cv2.resize(cropped_mask, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+
             # Perform auto-alignment if the option is enabled
             original_angle = 0  # Default angle
             if FacePopState.auto_align_faces:
@@ -701,6 +735,9 @@ class FacePopScript(scripts.Script):
                     if eyes_mouth_mask is not None:
                         eyes_mouth_mask = self.rotate_image(eyes_mouth_mask, total_rotation_angle)
                     original_angle = -total_rotation_angle  # Save the inverse angle for final overlay
+                    if cropped_mask_resized is not None:
+                        cropped_mask_resized = self.rotate_image(cropped_mask_resized, angle)
+
 
                     # **NEW CODE STARTS HERE**
                     if self.debug:
@@ -777,9 +814,11 @@ class FacePopScript(scripts.Script):
                 p_copy.denoising_strength = FacePopState.face_denoising
 
             # Apply the cropped mask for inpainting if available
-            if cropped_mask is not None:  # If there's a partial mask, resize it to match the face size
-                cropped_mask_resized = cv2.resize(cropped_mask, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)  # Resize cropped mask to face size
+            if cropped_mask_resized is not None:  # If there's a partial mask, resize it to match the face size
+                #cropped_mask_resized = cv2.resize(cropped_mask, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)  # Resize cropped mask to face size
                 p_copy.mask = Image.fromarray(cropped_mask_resized)  # Assign the cropped inpainting mask
+                output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_face_{iface+1}_inpaint_mask.png")
+                p_copy.mask.save(output_path)  # Save as a PIL image
             else:
                 p_copy.mask = None  # No mask needed if the face is fully within the inpainting region
 
@@ -993,12 +1032,22 @@ class FacePopScript(scripts.Script):
                     if self.debug:
                         print("[FacePop Debug] Final pass: No combined_mask found, skipping mask assignment.")
 
-                if hasattr(p, 'image_mask') and p.image_mask is not None:
-                    final_mask = self.combine_masks(p.image_mask, face_mask_pil)
+
+                # Check if p.image_mask exists
+                if p.image_mask is not None:
+                    # Copy the existing mask
+                    xmask = p.image_mask.copy()
+
+                    # Ensure xmask is the same size as face_mask_pil
+                    if xmask.size != face_mask_pil.size:
+                        xmask = xmask.resize(face_mask_pil.size, Image.NEAREST)
                 else:
-                    # Handle case for txt2img where no image_mask is present
-                    print("No image_mask present, skipping mask combination.")
-                    final_mask = face_mask_pil  # Use only the face mask in this case
+                    # Create an all-white mask (255 represents white in grayscale)
+                    xmask = Image.new('L', face_mask_pil.size, 255)
+
+                # Combine the masks using the new xmask
+                final_mask = self.combine_masks(xmask, face_mask_pil)
+                final_mask = final_mask.convert('L')
 
                 # Resize the final mask (PIL) to proc_width and proc_height
                 if final_mask is not None:
@@ -1187,7 +1236,7 @@ class FacePopScript(scripts.Script):
     
         # Initialize the mask image (black image)
         mask_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
-    
+
         # Initialize the list to store all accepted faces
         all_faces = []
     
@@ -1217,6 +1266,9 @@ class FacePopScript(scripts.Script):
             else:
                 rotated_image = image.copy()
                 rotated_mask_image = mask_image.copy()
+                
+            if self.debug:
+                print(f"[FacePop Debug] Entered 'detect_faces' method:{method} rotation: {rotation_angle}.")
     
             # Perform detection
             if method == 'mediapipe':
