@@ -1,5 +1,5 @@
 # FacePop
-(Version 1.1.1)
+(Version 1.1.2)
 
 ![FacePop Logo](resources/logo.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
