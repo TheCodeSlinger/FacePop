@@ -1,8 +1,37 @@
+; move to last of scripts list, this is done at the start of process to reorder how scripts are called
+; it is advised to keep the FacePopScriptAfter
+[last]
+ADetailer
+FacePopScriptAfter
+
 ; ignore any of these scripts when faces are being processed
 [faces]
 ADetailer
 
 ; ignore any of these scripts during final image composite
 [final]
-ReActor
+;ADetailer
 Overlay
+ReActor
+Extra options
+
+; ignore any of these if doing seperate process for eyes
+[eyes]
+ADetailer
+;ReActor
+Overlay
+ControlNet
+Soft Inpainting
+Asymmetric tiling
+Tiled Diffusion
+demofusion
+Tiled VAE
+OpenPose Editor
+Txt/Img to 3D Model
+Comments
+Refiner
+Sampler
+Seed
+
+
+

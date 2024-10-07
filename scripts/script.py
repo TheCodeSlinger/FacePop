@@ -3,11 +3,14 @@ import modules.scripts as scripts
 import gradio as gr
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageChops
 import importlib
 import copy
 import math
+from math import degrees
 import datetime
+import time
+
 import mediapipe as mp
 import torch
 import torch.nn as nn
@@ -18,6 +21,7 @@ from modnet.models.modnet import MODNet
 # Import the process_images function
 from modules.processing import process_images, StableDiffusionProcessingImg2Img
 
+
 # Initialize Mediapipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.9)
 
@@ -27,6 +31,7 @@ class FacePopState:
     processing parameters, and model references.
     """
     # Static variables
+    h = None
     original_image = np.zeros((512, 512, 3), dtype=np.uint8)  # The original input image being processed
     is_processing_faces = False  # Flag indicating if face processing is currently ongoing
     first_p = None  # The first processing object, possibly storing pipeline parameters
@@ -68,19 +73,29 @@ class FacePopState:
     face_detection = None  # Static variable for Mediapipe Face Detection
     deny_scripts_dict = {}  # Dictionary to manage script enabling/disabling
     upscale_to_original = False # Final Composite image will be saved to scale (after processing) of original source
-    face_seperate_proc = False # Use different processing settings for faces than what is used for final composite image
-    face_samping_steps = 40 # seperate face sampling steps
-    face_cfg_scale = 7.0 # seperate face CFG scale
-    face_denoising = 0.4 # seperate face denoising strength
+    face_separate_proc = False # Use different processing settings for faces than what is used for final composite image
+    face_sampling_steps = 34 # separate face sampling steps
+    face_cfg_scale = 7.0 # separate face CFG scale
+    face_denoising = 0.36 # separate face denoising strength
     ssd_model_loaded = False
+    eyes_separate_proc = False # Use different processing settings for faces than what is used for final composite image
+    eyes_sampling_steps = 34 # separat face sampling steps
+    eyes_denoising = 0.32 # separate face denoising strength
+    eyes_cfg_scale = 7.0 # separate face CFG scale
+    eyes_use = False
+    eyes_prompt = ""
+    eyes_neg = ""
+    face_prompt = ""
+    face_neg = ""
+    ignore_inpaint_final = False
 
     @staticmethod
     def reset():
-        #print('[FacePop Debug] [[[[[[[ RESET() ]]]]]]]')
+        print('[FacePop Debug] [[[[[[[ RESET() ]]]]]]]')
         """Reset all static variables to their default state."""
         FacePopState.original_image = np.zeros((512, 512, 3), dtype=np.uint8)
         FacePopState.is_processing_faces = False
-        FacePopState.first_p = None
+        #FacePopState.first_p = None
         FacePopState.first_cn_list = None
         FacePopState.processed_faces = []
         FacePopState.faces = []
@@ -113,10 +128,20 @@ class FacePopState:
         FacePopState.scripts = []
         FacePopState.deny_scripts_dict = {}
         FacePopState.upscale_to_original = False
-        FacePopState.face_seperate_proc = False
-        FacePopState.face_samping_steps = 40
+        FacePopState.face_separate_proc = False
+        FacePopState.face_sampling_steps = 40
         FacePopState.face_cfg_scale = 7.0
         FacePopState.face_denoising = 0.4
+        FacePopState.eyes_separate_proc = False # Use different processing settings for faces than what is used for final composite image
+        FacePopState.eyes_sampling_steps = 34 # separate face sampling steps
+        FacePopState.eyes_denoising = 0.32 # separate face denoising strength
+        FacePopState.eyes_cfg_scale = 7.0 # separate face CFG scale
+        FacePopState.eyes_use = False
+        FacePopState.eyes_prompt = ""
+        FacePopState.eyes_neg = ""
+        FacePopState.face_prompt = ""
+        FacePopState.face_neg = ""
+        FacePopState.ignore_inpaint_final = False
         # FacePopState.preview_images = []
         # ControlNetModule should not be reset as it's likely loaded once and reused.
         # FacePopState.ssd_model_loaded = False
@@ -160,7 +185,7 @@ class FacePopState:
             A string specifying the filename of the MODNet model checkpoint. 
             Defaults to 'modnet_photographic_portrait_matting.ckpt'.
 
-        :return: 
+        :return:
             None. The loaded MODNet model is stored in `FacePopState.modnet_model`.
         """
         model_dir = os.path.dirname(__file__)
@@ -186,7 +211,7 @@ class FacePopState:
         else:
             print('Use CPU...')
             cls.modnet_model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-    
+
         # Set the model to evaluation mode
         cls.modnet_model.eval()
         print("MODNet model loaded successfully.")
@@ -196,6 +221,7 @@ class FacePopScript(scripts.Script):
     def __init__(self):
         super().__init__()
         self.debug = False
+        FacePopState.h = self
 
     # Extension title in the menu UI
     def title(self):
@@ -204,7 +230,7 @@ class FacePopScript(scripts.Script):
     # Show in Img2Img only
     def show(self, is_img2img):
         return scripts.AlwaysVisible
-        
+
     def load_ssd_model(self):
         """
         Initializes the FacePopScript class by loading essential models, including ControlNet if available.
@@ -247,21 +273,29 @@ class FacePopScript(scripts.Script):
     def ui(self, is_img2img):
         """
         Constructs the user interface for the FacePop extension within AUTOMATIC1111's stable-diffusion-webui.
-        The UI is organized into distinct sections for basic features, debugging, advanced settings, and separate
-        face processing to facilitate future development and enhance user experience.
-    
+        Adds a new "Eye Control" section with sliders for controlling the position of irises and pupils.
+
         :param is_img2img:
-            A boolean flag indicating whether the UI is being constructed for the Img2Img interface. If `True`,
-            certain UI components may be adjusted or displayed differently to better suit the Img2Img workflow.
-    
+            A boolean flag indicating whether the UI is being constructed for the Img2Img interface.
+        
         :return:
-            A list of Gradio components corresponding to the parameters of the `process` method, maintaining the
-            order required for proper functionality.
+            A list of Gradio components corresponding to the parameters of the `process` method.
         """
         if not is_img2img:
             return None
 
-        with gr.Accordion("FacePop", open=False):
+        # Include inline CSS using gr.HTML
+        css = """
+        <style>
+        #facepop_accordion .gr-accordion-content {
+            background-color: purple;
+            color: white;
+        }
+        </style>
+        """
+        css_html = gr.HTML(css)
+
+        with gr.Accordion("FacePop", open=False, elem_id="facepop_accordion"):
             # --------------------- Basic Features ---------------------
             with gr.Group():
                 # Enable FacePop, Use MODNet, Aggressive Face Detection in one row
@@ -279,16 +313,15 @@ class FacePopScript(scripts.Script):
                 with gr.Row():
                     padding_slider = gr.Slider(minimum=0, maximum=100, step=1, label="Padding %", value=35, interactive=True)  # Padding
                     keep_ratio_checkbox = gr.Checkbox(label="Maintain Aspect Ratio", value=True, interactive=True)  # Keep aspect ratio
-
+    
                 # Detection Confidence Threshold and Maximum Faces to Process in one row
                 with gr.Row():
                     confidence_slider = gr.Slider(minimum=0.1, maximum=1.0, step=0.05, label="Detection Confidence Threshold", value=0.5, interactive=True)  # Confidence threshold
                     max_faces_slider = gr.Slider(minimum=0, maximum=32, step=1, label="Maximum Faces to Process", value=5, interactive=True)  # Max faces
-    
+
             # --------------------- Separate Face Processing Section ---------------------
             with gr.Accordion("Separate Face Processing", open=False):
                 with gr.Group():
-                    # Separate Face Processing Checkbox and Sampling Steps just below
                     separate_face_processing_checkbox = gr.Checkbox(label="Separate Face Processing", value=False, interactive=True)  # Enable separate face processing
                     sampling_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, label="Sampling Steps for Face Processing", value=40, interactive=True)  # Sampling steps for faces
     
@@ -296,23 +329,45 @@ class FacePopScript(scripts.Script):
                     with gr.Row():
                         cfg_scale_slider = gr.Slider(minimum=0.0, maximum=30.0, step=0.5, label="CFG Scale for Face Processing", value=7.0, interactive=True)  # CFG Scale for faces
                         denoising_strength_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label="Denoising Strength for Face Processing", value=0.4, interactive=True)  # Denoising strength for faces
-    
+
+                # Textboxes for prompts and negative prompts
+                with gr.Row():
+                    face_prompt = gr.Textbox(label="Face Prompt", value="", interactive=True)  # Default prompt
+                    face_neg = gr.Textbox(label="Face Negative Prompt", value="", interactive=True)  # Default negative prompt
+
+            # --------------------- Restore Eyes Section ---------------------
+            with gr.Accordion("Restore Eyes and Processing", open=False):
+                # Row for eye-related controls
+                with gr.Row():
+                    eyes_use = gr.Checkbox(label="Restore Eyes", value=False, interactive=True)
+                    eyes_separate_proc = gr.Checkbox(label="Separate Process For Eyes", value=True, interactive=True)
+            
+                # Sampling steps, denoising, and CFG scale sliders
+                with gr.Row():
+                    eyes_sampling_steps = gr.Slider(minimum=1, maximum=100, step=1, label="Sampling Steps", value=34, interactive=True)
+                    eyes_denoising = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label="Denoising", value=0.32, interactive=True)
+                    eyes_cfg_scale = gr.Slider(minimum=1.0, maximum=20.0, step=0.5, label="CFG Scale", value=7.0, interactive=True)
+            
+                # Textboxes for prompts and negative prompts
+                with gr.Row():
+                    eyes_prompt = gr.Textbox(label="Eyes Prompt", value="(perfect detailed eyes:1.3) (clear iris:1.2) (clear pupil:1.2)", interactive=True)  # Default prompt
+                    eyes_neg = gr.Textbox(label="Eyes Negative Prompt", value="bad eyes", interactive=True)  # Default negative prompt
+
             # --------------------- Advanced Settings Section ---------------------
             with gr.Accordion("Advanced Settings", open=False):
                 with gr.Group():
                     # Auto Align Faces and Upscale To Original Source on the same line
                     with gr.Row():
                         auto_align_faces_checkbox = gr.Checkbox(label="Auto-Align Faces Based on Landmarks", value=True, interactive=True)  # Auto-align faces
-                        rotation_angle_slider = gr.Slider(minimum=0, maximum=45, step=1, label="Rotation Angle Threshold (degrees)", value=10, interactive=True)  # Rotation angle threshold
-
+                        upscale_to_original_source_checkbox = gr.Checkbox(label="Upscale To Source", value=False, interactive=True)  # Upscale to original source
+                        ignore_inpaint_final = gr.Checkbox(label="Ignore Inpaint on Final", value=False, interactive=True)  # Upscale to original source
                     # Image Enhancement Method and Rotation Angle Threshold on the same line
                     with gr.Row():
                         enhancement_dropdown = gr.Dropdown(choices=["Unsharp Mask", "Bilateral Filter", "Median Filter", "Hybrid"], label="Image Enhancement Method", value="Unsharp Mask", interactive=True)  # Enhancement method
-                        upscale_to_original_source_checkbox = gr.Checkbox(label="Upscale To Original Source", value=False, interactive=True)  # Upscale to original source
-
+                        rotation_angle_slider = gr.Slider(minimum=0, maximum=45, step=1, label="Rotation Angle Threshold (degrees)", value=10, interactive=True)  # Rotation angle threshold
                     # Custom Output Path
                     output_path = gr.Textbox(label="Custom Output Path", value="[date]", placeholder="Enter a custom path (use [date] for current date)", interactive=True)  # Custom output path
-
+    
             # --------------------- Debugging Section ---------------------
             with gr.Accordion("Debugging", open=False):
                 with gr.Group():
@@ -331,6 +386,7 @@ class FacePopScript(scripts.Script):
             keep_ratio_checkbox,  # Maintain Aspect Ratio
             confidence_slider,  # Confidence Threshold
             max_faces_slider,  # Max Faces
+            eyes_use, # use custom eyes
             debug,  # Enable Debugging
             output_faces_checkbox,  # Output Faces
             auto_align_faces_checkbox,  # Auto-Align Faces
@@ -341,17 +397,29 @@ class FacePopScript(scripts.Script):
             separate_face_processing_checkbox,  # Separate Face Processing
             sampling_steps_slider,  # Sampling Steps for Face Processing
             cfg_scale_slider,  # CFG Scale for Face Processing
-            denoising_strength_slider  # Denoising Strength for Face Processing
+            denoising_strength_slider,  # Denoising Strength for Face Processing
+            eyes_separate_proc,
+            eyes_sampling_steps,
+            eyes_denoising,
+            eyes_cfg_scale,
+            eyes_prompt,  # Eyes prompt textbox
+            eyes_neg,      # Eyes negative prompt textbox
+            face_prompt,  # Eyes prompt textbox
+            face_neg,      # Eyes negative prompt textbox
+            ignore_inpaint_final
         ]
 
 
     def process(self, p, enabled=True, modnet_checkbox=True, aggressive_detection_checkbox=True,
                 scale_width_slider=1.0, scale_height_slider=1.0, padding_slider=0,
                 keep_ratio_checkbox=True, confidence_slider=0.5, max_faces_slider=5,
+                eyes_use = False, # New parameters for eye control
                 debug=False, output_faces_checkbox=True, auto_align_faces_checkbox=True,
                 upscale_to_original_source_checkbox=True, enhancement_dropdown="None",
                 rotation_angle_slider=0.0, output_path="", separate_face_processing_checkbox=False,
-                sampling_steps_slider=20, cfg_scale_slider=7.0, denoising_strength_slider=0.75):
+                sampling_steps_slider=20, cfg_scale_slider=7.0, denoising_strength_slider=0.75,
+                eyes_separate_proc=True, eyes_sampling_steps=34, eyes_denoising=.33, eyes_cfg_scale=7.0,
+                eyes_prompt="", eyes_neg="", face_prompt="", face_neg="", ignore_inpaint_final=False):
     # Method implementation
         """
         Main processing method that handles face detection, enhancement, and other operations.
@@ -367,15 +435,27 @@ class FacePopScript(scripts.Script):
         - Handles post-processing tasks, including overlaying processed faces onto the base image and saving the final output.
         - Manages the state of the extension to prevent redundant processing and ensure proper cleanup after operations.
 
-        :return: 
-            None. This method modifies the `processed.images` attribute by replacing it with the final 
+        :return:
+            None. This method modifies the `processed.images` attribute by replacing it with the final
             composite images stored in `FacePopState.preview_images`.
         """
+
+        # If the extension is not enabled, do nothing
+        if not enabled:
+            FacePopState.enabled = False
+            return
+        if not FacePopState.enabled:
+            return
+
         if not isinstance(p, StableDiffusionProcessingImg2Img):
+            FacePopState.enabled = False
             return
 
         # Initialize the debug attribute
         self.debug = debug
+        
+        self.load_ssd_model() # Load SSD Model, if not already loaded
+
 
         if self.debug:
             print("[FacePop Debug] Entered 'process' method")
@@ -383,26 +463,34 @@ class FacePopScript(scripts.Script):
         if FacePopState.final_image_pass == True:
             return
             
+        if hasattr(p, 'init_images') is None:
+            if self.debug:
+                print("[FacePop Debug] No image to process (no 'init_images')")
+            return
+        if p.init_images is None:
+            if self.debug:
+                print("[FacePop Debug] No image to process (init_images is None)")
+            return
+        if  p.init_images[0] is None:
+            if self.debug:
+                print("[FacePop Debug] No image to process (init_images[0] is None)")
+            return
+
         if FacePopState.started == True:
             if self.debug:
                 print(f"[FacePop Debug] Stopping Process from running again.")
             return
 
-        # If the extension is not enabled, do nothing
-        if not enabled:
-            #if self.debug:
-            #    print(f"[FacePop Debug] Extension not enabled. Exiting 'process' method.")
-            FacePopState.enabled = False
-            return
-        if not FacePopState.enabled:
+        # Prevent re-entrance if already processing faces
+        if FacePopState.is_processing_faces:
+            if self.debug:
+                print(f"[FacePop Debug] Already processing faces, skipping.")
             return
 
         if FacePopState.started == False:
             FacePopState.started = True
             if self.debug:
                 print("[FacePop Debug] ------------------------- STARTING FACEPOP -------------------------")
-
-                self.load_ssd_model() # Load SSD Model, if not already loaded
 
             FacePopState.reset() # reset on startup just to be sure
             ## Load deny scripts dictionary
@@ -416,7 +504,7 @@ class FacePopScript(scripts.Script):
                     print(f"[FacePop Debug] Could not load deny scripts list from {scripts_deny_file}")
 
 
-        # **New Addition: Prevent Automatic1111 from saving images**
+        # Prevent Automatic1111 from saving images**
         p.do_not_save_samples = True
         #p.do_not_save_grid = True
         if self.debug:
@@ -491,10 +579,20 @@ class FacePopScript(scripts.Script):
         FacePopState.output_faces = output_faces_checkbox
         FacePopState.aggressive_detection = aggressive_detection_checkbox
         FacePopState.upscale_to_original = upscale_to_original_source_checkbox
-        FacePopState.face_seperate_proc = separate_face_processing_checkbox
-        FacePopState.face_samping_steps = sampling_steps_slider
+        FacePopState.face_separate_proc = separate_face_processing_checkbox
+        FacePopState.face_sampling_steps = sampling_steps_slider
         FacePopState.face_cfg_scale = cfg_scale_slider
         FacePopState.face_denoising = denoising_strength_slider
+        FacePopState.eyes_use = eyes_use
+        FacePopState.eyes_sampling_steps = eyes_sampling_steps
+        FacePopState.eyes_denoising = eyes_denoising
+        FacePopState.eyes_cfg_scale = eyes_cfg_scale
+        FacePopState.eyes_separate_proc = eyes_separate_proc
+        FacePopState.eyes_prompt = eyes_prompt
+        FacePopState.eyes_neg = eyes_neg
+        FacePopState.face_prompt = face_prompt
+        FacePopState.face_neg = face_neg
+        FacePopState.ignore_inpaint_final = ignore_inpaint_final
 
         # Capture the actual original image dimensions before any processing
         if FacePopState.proc_width == 0:
@@ -505,6 +603,7 @@ class FacePopScript(scripts.Script):
             FacePopState.preview_images = [] # clear previews
             if self.debug:
                 print(f"[FacePop Debug] Original image dimensions: {FacePopState.original_image_size} proc {FacePopState.proc_width} x {FacePopState.proc_height}")
+            self.last_scripts(FacePopState.deny_scripts_dict.get('last', [])) # move defined scripts to last of list
 
         if FacePopState.batch_total == -1:
             FacePopState.batch_total = p.n_iter * p.batch_size
@@ -542,9 +641,9 @@ class FacePopScript(scripts.Script):
 
             # Set the total number of faces to process
             FacePopState.total_faces = len(FacePopState.faces)
-            print(f"[FacePop Debug] Number of faces detected: {FacePopState.total_faces}")
             FacePopState.countdown = FacePopState.total_faces# + 1
             if self.debug:
+                print(f"[FacePop Debug] Number of faces detected: {FacePopState.total_faces}")
                 print(f"[FacePop Debug] Batching Postprocess Countdown Starting at: {FacePopState.countdown}")
             if FacePopState.total_faces == 0:
                 if self.debug:
@@ -563,10 +662,9 @@ class FacePopScript(scripts.Script):
 
             try:
                 # Store the original p for future use (if it's the first call)
-                if FacePopState.first_p is None:
-                    FacePopState.first_p = copy.copy(p)
-                    if FacePopState.controlNetModule:
-                        FacePopState.first_cn_list = FacePopState.controlNetModule.get_all_units_in_processing(FacePopState.first_p)
+                FacePopState.first_p = copy.copy(p)
+                if FacePopState.controlNetModule:
+                    FacePopState.first_cn_list = FacePopState.controlNetModule.get_all_units_in_processing(FacePopState.first_p)
 
                 if FacePopState.faces is not None and FacePopState.total_faces > 0:
                     # Process the detected faces and accumulate processed faces
@@ -579,12 +677,12 @@ class FacePopScript(scripts.Script):
                 FacePopState.is_processing_faces = False
                 # Trash P..can't stop it from running so just make it as short as possible
                 #p.init_images = []  # Clear the input images # ERRORS
-                p.width = 100
-                p.height = 100
 
             if self.debug:
                 print("[FacePop Debug] Exiting 'process' method after processing faces.")
-
+                p.width = 100
+                p.height = 100
+                self.remove_all_scripts()
         return
 
     def crop_upscale_and_process_faces(self, image, p):
@@ -626,15 +724,14 @@ class FacePopScript(scripts.Script):
             return processed_faces
 
         # Convert the inpainting mask to a NumPy array (assuming p.image_mask is a PIL image)
-        mask = np.array(p.image_mask) if p.image_mask else None
-        
-        # Resize the mask to match the image size (if mask is not None)
-        if mask is not None:
-            if mask.shape[:2] != image.shape[:2]:
-                if self.debug:
-                    print("[FacePop Debug] Resizing mask to match image dimensions.")
+        if p.image_mask is not None:
+            mask = np.array(p.image_mask)
+            if mask.size > 0:  # Check if the mask is not empty
                 mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
-
+            else:
+                mask = None  # Set to None if mask is empty
+        else:
+            mask = None  # Set to None if p.image_mask is None
 
         # Create a dummy placeholder (a blank image with the same size as the face crop)
         def create_dummy_image(width, height):
@@ -656,6 +753,11 @@ class FacePopScript(scripts.Script):
             y_end = min(y + h + padding, image.shape[0])
 
             face = image[y_start:y_end, x_start:x_end]
+            if FacePopState.auto_align_faces:
+                # Detect landmarks using Mediapipe's Face Mesh on the resized face
+                landmarks, lm_masks = self.detect_landmarks(face)
+                x_start, y_start, x_end, y_end = self.adjust_box_based_on_pose(landmarks, image.shape[1], image.shape[0], x_start, y_start, x_end, y_end)
+                face = image[y_start:y_end, x_start:x_end]
 
             if mask is not None:
                 if self.debug:
@@ -685,7 +787,7 @@ class FacePopScript(scripts.Script):
                     # Ensure processed_faces is initialized properly
                     while len(processed_faces) <= iface:
                         processed_faces.append([])
-                
+
                     processed_faces[iface].append((dummy_face, (x_start, y_start, x_end, y_end), 'skipped'))  # Mark as skipped
 
                     # Adjust countdown
@@ -695,7 +797,7 @@ class FacePopScript(scripts.Script):
             if self.debug:
                 print(f"[FacePop Debug] Face #{iface+1} original size: {face.shape[:2]} (height, width)")
 
-            # **NEW STEP**: Resize the face first
+            # Resize the face first
             if FacePopState.keep_ratio:
                 aspect_ratio = face.shape[1] / face.shape[0]
                 if aspect_ratio > 1:
@@ -710,7 +812,7 @@ class FacePopScript(scripts.Script):
 
             face_resized = cv2.resize(face, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
 
-            # **NEW STEP**: Create a copy of the resized face for blending later
+            # Create a copy of the resized face for blending later
             original_face_copy = face_resized.copy()
 
             if cropped_mask is not None:
@@ -720,7 +822,7 @@ class FacePopScript(scripts.Script):
             original_angle = 0  # Default angle
             if FacePopState.auto_align_faces:
                 # Detect landmarks using Mediapipe's Face Mesh on the resized face
-                landmarks, eyes_mouth_mask = self.detect_landmarks(face_resized)
+                landmarks, lm_masks = self.detect_landmarks(face_resized)
 
                 angle = self.calculate_rotation_angle(landmarks)
                 if angle != 0:
@@ -732,14 +834,11 @@ class FacePopScript(scripts.Script):
 
                     # Rotate the face if necessary
                     face_resized = self.rotate_image(face_resized, total_rotation_angle, True)
-                    if eyes_mouth_mask is not None:
-                        eyes_mouth_mask = self.rotate_image(eyes_mouth_mask, total_rotation_angle)
+
                     original_angle = -total_rotation_angle  # Save the inverse angle for final overlay
                     if cropped_mask_resized is not None:
                         cropped_mask_resized = self.rotate_image(cropped_mask_resized, angle)
 
-
-                    # **NEW CODE STARTS HERE**
                     if self.debug:
                         # Draw landmarks on the rotated face
                         debug_face_with_landmarks = face_resized.copy()
@@ -756,14 +855,13 @@ class FacePopScript(scripts.Script):
                             print(f"[FacePop Debug] Unexpected number of channels in face image: {debug_face_with_landmarks.shape[2]}")
 
                         # Draw the landmarks
-                        for (x_lm, y_lm) in landmarks:
+                        for (x_lm, y_lm, z_lm) in landmarks:
                             cv2.circle(debug_face_with_landmarks, (int(x_lm), int(y_lm)), 2, (0, 0, 255), -1)
 
                         # Save the image in the debug folder
                         debug_output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_debug_face_{iface+1}_landmarks.png")
                         cv2.imwrite(debug_output_path, debug_face_with_landmarks)
                         print(f"[FacePop Debug] Saved face with landmarks for face #{iface+1} at {debug_output_path}")
-                    # **NEW CODE ENDS HERE**
 
                     # Debugging: Log the size of the face after rotation
                     if self.debug:
@@ -774,12 +872,6 @@ class FacePopScript(scripts.Script):
             else:
                 if self.debug:
                     print(f"[FacePop Debug] Face #{iface+1} skipped alignment.")
-
-            if eyes_mouth_mask is not None:
-                # Save or use the mask as needed
-                # For example, save the mask for debugging
-                debug_output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_debug_face_{iface+1}_eyes_mouth_mask.png")
-                cv2.imwrite(debug_output_path, eyes_mouth_mask)
 
             # Apply the selected enhancement method
             if FacePopState.enhancement_method == "Unsharp Mask":
@@ -795,7 +887,7 @@ class FacePopScript(scripts.Script):
             face_image = Image.fromarray(face_resized)
 
             # Create a copy of the 'p' object for face processing
-            p_copy = copy.copy(p)
+            p_copy = copy.copy(FacePopState.first_p)#(p)
             p_copy.init_images = [face_image]
             p_copy.width = new_width
             p_copy.height = new_height
@@ -808,10 +900,15 @@ class FacePopScript(scripts.Script):
             p_copy.fp_y_end = y_end
             p_copy.fp_angle = angle
 
-            if FacePopState.face_seperate_proc:
-                p_copy.steps = FacePopState.face_samping_steps
+            if FacePopState.face_separate_proc:
+                p_copy.steps = FacePopState.face_sampling_steps
                 p_copy.cfg_scale = FacePopState.face_cfg_scale
                 p_copy.denoising_strength = FacePopState.face_denoising
+                
+            if FacePopState.face_prompt != "":
+                p_copy.prompt = FacePopState.face_prompt
+            if FacePopState.face_neg != "":
+                p_copy.negative_prompt = FacePopState.face_neg
 
             # Apply the cropped mask for inpainting if available
             if cropped_mask_resized is not None:  # If there's a partial mask, resize it to match the face size
@@ -834,9 +931,10 @@ class FacePopScript(scripts.Script):
                 print("[FacePop Debug] Starting PROCESS_IMAGES() for face")
 
 
-            #self.toggle_scripts(False, FacePopState.deny_scripts_dict.get('faces', []))
+            self.remove_scripts(FacePopState.deny_scripts_dict.get('faces', []))
             processed = process_images(p_copy) # Process the image using the Img2Img pipeline
-            #self.toggle_scripts(True, FacePopState.deny_scripts_dict.get('faces', []))
+            time.sleep(2) # allow cooldown
+            self.restore_all_scripts()
 
             if self.debug:
                 print("[FacePop Debug] Exited PROCESS_IMAGES()")
@@ -849,14 +947,17 @@ class FacePopScript(scripts.Script):
                 # Non-batch mode: Process only image[0]
                 processed_face_image = np.array(processed.images[0])
 
+                if FacePopState.eyes_use:
+                    processed_face_image = self.do_eyes(face_image, processed.images[0])#, landmarks)
+
                 modnet_used = False
                 if FacePopState.modnet_model is not None:
                     # Convert the processed face to a PIL image for background removal
                     processed_face_pil = Image.fromarray(processed_face_image)
-                    
+
                     # Remove the background using MODNet
                     modnet_image = self.remove_background_with_modnet(processed_face_pil)
-                    
+
                     # Convert the MODNet result (modnet_image) back to a NumPy array for further processing
                     processed_face_image = np.array(modnet_image)  # Ensure it's in NumPy format
                     modnet_used = True  # Mark MODNet as used
@@ -876,7 +977,7 @@ class FacePopScript(scripts.Script):
 
                 if not modnet_used:
                     processed_face_image = self.blend_with_background(original_face_copy, processed_face_image)
-                
+
                 # Convert the blended NumPy array back to a PIL Image for further processing or saving
                 final_face_image = Image.fromarray(processed_face_image)
 
@@ -885,7 +986,7 @@ class FacePopScript(scripts.Script):
                     final_face_image.save(output_path)
                     if self.debug:
                        print(f"[FacePop Debug] Saved processed face #{iface+1} as {output_path}")
-            
+
                 if len(processed_faces) == 0:
                     processed_faces.append([])
 
@@ -896,11 +997,16 @@ class FacePopScript(scripts.Script):
                 # Batch mode: Process each image from images[1] onward -- update for grid
                 for batch_index in range(1, FacePopState.batch_count + 1):
                     processed_face_image = np.array(processed.images[batch_index])
+                    
+                    if FacePopState.eyes_use:
+                        processed_face_image = self.do_eyes(face_image, processed.images[batch_index])#, landmarks)
 
                     modnet_used = False
                     if FacePopState.modnet_model is not None:
                         # Convert the processed face to a PIL image for background removal
                         processed_face_pil = Image.fromarray(processed_face_image)
+                        
+                        # Remove the background using MODNet
                         modnet_image = self.remove_background_with_modnet(processed_face_pil)
                 
                         # Convert the MODNet result (modnet_image) back to a NumPy array for further processing
@@ -948,8 +1054,8 @@ class FacePopScript(scripts.Script):
 
     def postprocess(self, p, processed, *args):
         """
-        Handles the final postprocessing by creating the final composite image. This involves overlaying 
-        processed faces onto the base image, saving the final image, and resetting the extension's state 
+        Handles the final postprocessing by creating the final composite image. This involves overlaying
+        processed faces onto the base image, saving the final image, and resetting the extension's state
         once all faces have been processed.
 
         :param p: The processing object from AUTOMATIC1111's pipeline. Contains information such as 
@@ -957,7 +1063,7 @@ class FacePopScript(scripts.Script):
         :param processed: The result object from the processing pipeline. It includes the images generated 
                           during processing.
         :param args: Additional arguments that may be passed to the method. Currently unused.
-        :return: None. Modifies the `processed.images` attribute by replacing it with the final composite 
+        :return: None. Modifies the `processed.images` attribute by replacing it with the final composite
                  images stored in `FacePopState.preview_images`.
         """
         if not isinstance(p, StableDiffusionProcessingImg2Img):
@@ -966,7 +1072,7 @@ class FacePopScript(scripts.Script):
             print("[FacePop Debug] Entered 'postprocess' method")
 
         if FacePopState.enabled == False:
-            print("[FacePop Debug] PostProcess..not enabled.")
+            #print("[FacePop Debug] PostProcess..not enabled.")
             if FacePopState.countdown == 0:  # final pass
                 FacePopState.reset()
                 FacePopState.started = False
@@ -986,6 +1092,7 @@ class FacePopScript(scripts.Script):
         # Only process on the final pass (countdown == 0)
         if FacePopState.countdown == 0:
 
+            self.restore_all_scripts()
             p.width = FacePopState.proc_width
             p.height = FacePopState.proc_height
 
@@ -1034,13 +1141,13 @@ class FacePopScript(scripts.Script):
 
 
                 # Check if p.image_mask exists
-                if p.image_mask is not None:
+                if p.image_mask is not None and not FacePopState.ignore_inpaint_final:
                     # Copy the existing mask
                     xmask = p.image_mask.copy()
 
                     # Ensure xmask is the same size as face_mask_pil
                     if xmask.size != face_mask_pil.size:
-                        xmask = xmask.resize(face_mask_pil.size, Image.NEAREST)
+                        xmask = xmask.resize(face_mask_pil.size, Image.LANCZOS)
                 else:
                     # Create an all-white mask (255 represents white in grayscale)
                     xmask = Image.new('L', face_mask_pil.size, 255)
@@ -1060,6 +1167,8 @@ class FacePopScript(scripts.Script):
                         final_mask.save(output_path)
                         print(f"[FacePop Debug] Final pass: Saving combined_mask with inpaint mask. {output_path}")
 
+                #if FacePopState.eyes_use:
+
                 # Resize the final image (PIL) to proc_width and proc_height
                 if final_image_pil is not None:
                     final_image_pil = final_image_pil.resize((FacePopState.proc_width, FacePopState.proc_height), Image.LANCZOS)
@@ -1068,6 +1177,7 @@ class FacePopScript(scripts.Script):
                         output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_face_overlays.png")
                         final_image_pil.save(output_path)
                         print(f"[FacePop Debug] Final pass: Saving overlay image. {output_path}")
+
 
                 if FacePopState.first_p is not None:
                     p_copy = copy.copy(FacePopState.first_p)
@@ -1082,10 +1192,12 @@ class FacePopScript(scripts.Script):
                         print("[FacePop Debug] Starting final process.")
 
                     FacePopState.final_image_pass = True
-                    self.toggle_scripts(False, FacePopState.deny_scripts_dict.get('final', []))
+                    self.remove_scripts(FacePopState.deny_scripts_dict.get('final', []))
+                    #self.remove_all_scripts()
                     # Call the image processing function with p_copy
                     processed_copy = process_images(p_copy)
-                    self.toggle_scripts(True, FacePopState.deny_scripts_dict.get('final', []))
+                    time.sleep(2) # allow cooldown
+                    self.restore_all_scripts()
                     FacePopState.final_image_pass = False
 
                     if self.debug:
@@ -1106,12 +1218,10 @@ class FacePopScript(scripts.Script):
                             if self.debug:
                                 print(f"[FacePop Debug] Processed image is already the same size as the original image: {original_size}")
 
+                    # Save the final composite image
+                    self.save_final(processed_copy.images[0], '')
 
-                    # Save the final composite image for this batch
-                    final_output_path = os.path.join(self.output_path(), f"{FacePopState.timestamp}_final_composite.png")
-                    processed_copy.images[0].save(final_output_path)
-                    if self.debug:
-                        print(f"[FacePop Debug] Saving final image: {final_output_path}")
+                    # Append Previews
                     FacePopState.preview_images.append(processed_copy.images[0])
                     if self.debug:
                         print(f"[FacePop Debug] Previews appended.")
@@ -1124,12 +1234,15 @@ class FacePopScript(scripts.Script):
                     if self.debug:
                         print(f"[FacePop Debug] Processing batch image #{batch_index}")
 
-                    # Calculate which set of faces to use
-                    face_index = (batch_index - 1) % len(FacePopState.processed_faces)
-                    batch_faces = FacePopState.processed_faces[face_index]
-
-                    if self.debug:
-                        print(f"[FacePop Debug] Using face set {face_index} for batch image #{batch_index}")
+                    # Ensure there are processed faces to use
+                    if len(FacePopState.processed_faces) > 0:
+                        # Calculate which set of faces to use
+                        face_index = (batch_index - 1) % len(FacePopState.processed_faces)
+                        batch_faces = FacePopState.processed_faces[face_index]
+                        if self.debug:
+                            print(f"[FacePop Debug] Using face set {face_index} for batch image #{batch_index}")
+                    else:
+                        print("[FacePop Debug] No processed faces available.")
 
                     # Get the original image and resize if necessary
                     final_image = FacePopState.original_image.copy()
@@ -1156,15 +1269,27 @@ class FacePopScript(scripts.Script):
                         if self.debug:
                             print(f"[FacePop Debug] Batch pass: No combined_mask found for batch {batch_index}, skipping mask assignment.")
 
-                    # Combine the final mask
-                    final_mask = self.combine_masks(p.image_mask, face_mask_pil)
+                    # Check if p.image_mask exists
+                    if p.image_mask is not None and not FacePopState.ignore_inpaint_final:
+                        # Copy the existing mask
+                        xmask = p.image_mask.copy()
+
+                        # Ensure xmask is the same size as face_mask_pil
+                        if xmask.size != face_mask_pil.size:
+                            xmask = xmask.resize(face_mask_pil.size, Image.LANCZOS)
+                    else:
+                        # Create an all-white mask (255 represents white in grayscale)
+                        xmask = Image.new('L', face_mask_pil.size, 255)
+
+                    # Combine the masks using the new xmask
+                    final_mask = self.combine_masks(xmask, face_mask_pil)
                     final_mask = final_mask.convert('L')
 
                     # Resize the final mask (PIL) to proc_width and proc_height
                     if final_mask is not None:
                         final_mask = final_mask.resize((FacePopState.proc_width, FacePopState.proc_height), Image.LANCZOS)
                         if self.debug:
-                            print(f"[FacePop Debug] Batch pass: Resized final_mask to ({FacePopState.proc_width}, {FacePopState.proc_height})")
+                            #print(f"[FacePop Debug] Batch pass: Resized final_mask to ({FacePopState.proc_width}, {FacePopState.proc_height})")
                             output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_debug_mask_inpaint_batch_{batch_index}.png")
                             final_mask.save(output_path)
                             print(f"[FacePop Debug] Batch pass: Saving combined_mask with inpaint mask for batch {batch_index}. {output_path}")
@@ -1190,12 +1315,13 @@ class FacePopScript(scripts.Script):
 
                         if self.debug:
                             print(f"[FacePop Debug] Starting final process for batch #{batch_index}.")
-    
+
                         FacePopState.final_image_pass = True
-                        self.toggle_scripts(False, FacePopState.deny_scripts_dict.get('final', []))
+                        self.remove_scripts(FacePopState.deny_scripts_dict.get('final', []))
                         # Call the image processing function with p_copy
                         processed_copy = process_images(p_copy)
-                        self.toggle_scripts(True, FacePopState.deny_scripts_dict.get('final', []))
+                        time.sleep(2) # allow cooldown
+                        self.restore_all_scripts()
                         FacePopState.final_image_pass = False
 
                         if self.debug:
@@ -1205,14 +1331,28 @@ class FacePopScript(scripts.Script):
                         FacePopState.batch_i = FacePopState.batch_i + 1
 
                         for idx in range(start_idx, FacePopState.batch_count + 1):
-                            final_output_path = os.path.join(self.output_path(), f"{FacePopState.timestamp}_final_composite_batch_{FacePopState.batch_i}.png")
-                            processed_copy.images[idx].save(final_output_path)
-                            if self.debug:
-                               print(f"[FacePop Debug] Saved final composite image for batch #{FacePopState.batch_i} at {final_output_path}")
+
+                            # Check if upscale_to_original is enabled and resize processed_copy.images[0] to the size of the original image
+                            if FacePopState.upscale_to_original:
+                                original_size = FacePopState.original_image.size  # Get the size (width, height) of the original image
+                                processed_size = processed_copy.images[idx].size  # Get the size of the processed image
+                                if processed_size != original_size:
+                                    if self.debug:
+                                        print(f"[FacePop Debug] Resizing processed image from {processed_size} to match original image size: {original_size}")
+                        
+                                    # Resize processed_copy.images[0] to match the original image size using LANCZOS for high-quality scaling
+                                    processed_copy.images[idx] = processed_copy.images[idx].resize(original_size, Image.LANCZOS)
+                                else:
+                                    if self.debug:
+                                        print(f"[FacePop Debug] Processed image is already the same size as the original image: {original_size}")
+
+                            # Save the final composite image
+                            self.save_final(processed_copy.images[idx], '_batch_' + str(FacePopState.batch_i))
+        
+                            # Append Previews
                             FacePopState.preview_images.append(processed_copy.images[idx])
                             if self.debug:
                                print(f"[FacePop Debug] Previews appended.")
-
 
             # Reset static state variables after the final image is created
             if self.debug:
@@ -1225,6 +1365,202 @@ class FacePopScript(scripts.Script):
 
         if self.debug:
             print("[FacePop Debug] Exiting 'postprocess' method (non-final pass).")
+            
+
+    def save_final(self, image, tt= ''):
+        final_output_path = os.path.join(self.output_path(), f"{FacePopState.timestamp}_final_composite{tt}.png")
+        image.save(final_output_path)
+        if self.debug:
+             print(f"[FacePop Debug] Saving final image: {final_output_path}")
+        FacePopState.preview_images.append(image)
+        if self.debug:
+             print(f"[FacePop Debug] Previews appended.")
+
+    def estimate_head_pose(self, landmarks, image_size):
+        """
+        Estimate the head pose from landmarks.
+
+        :param landmarks: List of (x, y, z) tuples representing landmarks.
+        :param image_size: Tuple of image size (height, width).
+        :return: Tuple (yaw, pitch, roll) in degrees, or None if estimation fails.
+        """
+        try:
+            # Define 3D model points of facial landmarks in a normalized coordinate space
+            model_points = np.array([
+                (0.0, 0.0, 0.0),          # Nose tip
+                (0.0, -100.0, -30.0),     # Chin
+                (-60.0, 40.0, -30.0),     # Left eye left corner
+                (60.0, 40.0, -30.0),      # Right eye right corner
+                (-40.0, -40.0, -30.0),    # Left mouth corner
+                (40.0, -40.0, -30.0)      # Right mouth corner
+            ])
+
+            # Required landmark indices
+            required_indices = [1, 152, 33, 263, 61, 291]
+
+            # Check if all required landmarks are present
+            if max(required_indices) >= len(landmarks):
+                return None
+
+            # Map landmarks indices to image points
+            image_points = np.array([
+                (landmarks[i][0], landmarks[i][1]) for i in required_indices
+            ], dtype="double")
+
+            # Camera internals
+            focal_length = image_size[1]
+            center = (image_size[1] / 2, image_size[0] / 2)
+            camera_matrix = np.array(
+                [[focal_length, 0, center[0]],
+                 [0, focal_length, center[1]],
+                 [0, 0, 1]], dtype="double"
+            )
+
+            dist_coeffs = np.zeros((4, 1))  # Assuming no lens distortion
+
+            success, rotation_vector, translation_vector = cv2.solvePnP(
+                model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
+            )
+
+            if not success:
+                return None
+
+            # Convert rotation vector to rotation matrix
+            rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
+
+            # Calculate Euler angles from rotation matrix
+            sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
+            singular = sy < 1e-6
+
+            if not singular:
+                pitch = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
+                yaw = np.arctan2(rotation_matrix[2, 0], sy)
+                roll = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+            else:
+                pitch = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])
+                yaw = np.arctan2(rotation_matrix[2, 0], sy)
+                roll = 0
+
+            # Convert radians to degrees
+            pitch = degrees(pitch)
+            yaw = degrees(yaw)
+            roll = degrees(roll)
+
+            return yaw, pitch, roll
+
+        except (IndexError, cv2.error, Exception) as e:
+            # Handle exceptions and return None to indicate failure
+            return None
+
+    def adjust_crop_box_for_profile(self, box, yaw_angle, pitch_angle, image_width, image_height):
+        """
+        Adjusts the crop box based on the face's yaw and pitch angles.
+
+        :param box: Tuple (x_start, y_start, x_end, y_end)
+        :param yaw_angle: Yaw angle in degrees
+        :param pitch_angle: Pitch angle in degrees
+        :param image_width: Width of the image
+        :param image_height: Height of the image
+        :return: Adjusted box (x_start, y_start, x_end, y_end)
+        """
+        x_start, y_start, x_end, y_end = box
+        box_width = x_end - x_start
+        box_height = y_end - y_start
+
+        # Threshold for yaw angle
+        yaw_threshold = 30  # degrees
+        max_shift_fraction = 0.15  # maximum shift as fraction of box width
+        max_shift_pixels = int(box_width * max_shift_fraction)  # maximum shift in pixels
+
+        # Calculate shift amount based on yaw angle
+        if abs(yaw_angle) > yaw_threshold:
+            degrees_beyond_yaw = abs(yaw_angle) - yaw_threshold
+            shift_amount = min(int(degrees_beyond_yaw), max_shift_pixels)  # 1 pixel per degree beyond threshold
+        else:
+            shift_amount = 0
+
+        # Shift the box away from the direction the face is looking
+        if yaw_angle > 0:
+            # Face is turned to the subject's left (camera's right)
+            # Shift the box to the left (away from the direction they are looking)
+            x_start = max(0, x_start - shift_amount)
+            x_end = max(0, x_end - shift_amount)
+        elif yaw_angle < 0:
+            # Face is turned to the subject's right (camera's left)
+            # Shift the box to the right (away from the direction they are looking)
+            x_start = min(image_width - 1, x_start + shift_amount)
+            x_end = min(image_width - 1, x_end + shift_amount)
+
+        # Extension for yaw angle beyond threshold
+        if abs(yaw_angle) > yaw_threshold:
+            degrees_beyond_yaw = abs(yaw_angle) - yaw_threshold
+            extension_x = int(degrees_beyond_yaw * 0.9)  # pixels per degree beyond threshold
+
+            if yaw_angle > 0:
+                # Face is turned to the subject's left (camera's right)
+                # Extend box on the left side (opposite side)
+                x_start = max(0, x_start - extension_x)
+            elif yaw_angle < 0:
+                # Face is turned to the subject's right (camera's left)
+                # Extend box on the right side (opposite side)
+                x_end = min(image_width - 1, x_end + extension_x)
+
+        # Threshold for pitch angle
+        pitch_threshold = 15  # degrees
+
+        # Adjust the box vertically based on pitch angle
+        if pitch_angle > pitch_threshold:
+            # Face tilted up (positive pitch angle)
+            degrees_beyond_pitch = pitch_angle - pitch_threshold
+            extension_bottom = int(degrees_beyond_pitch / 8)  # 1 pixel per 8 degrees beyond threshold
+            y_end = min(image_height - 1, y_end + extension_bottom)
+        elif pitch_angle < -pitch_threshold:
+            # Face tilted down (negative pitch angle)
+            degrees_beyond_pitch = abs(pitch_angle) - pitch_threshold
+            extension_top = int(degrees_beyond_pitch / 4)  # 1 pixel per 4 degrees beyond threshold
+            y_start = max(0, y_start - extension_top)
+
+        # Ensure the box dimensions are valid
+        if x_end <= x_start:
+            x_start, x_end = box[0], box[2]  # Revert to original if invalid
+        if y_end <= y_start:
+            y_start, y_end = box[1], box[3]  # Revert to original if invalid
+
+        # Clamp values to image boundaries
+        x_start = int(max(0, min(x_start, image_width - 1)))
+        y_start = int(max(0, min(y_start, image_height - 1)))
+        x_end = int(max(0, min(x_end, image_width - 1)))
+        y_end = int(max(0, min(y_end, image_height - 1)))
+
+        return x_start, y_start, x_end, y_end
+
+    def adjust_box_based_on_pose(self, landmarks, image_width, image_height, x_start, y_start, x_end, y_end):
+        """
+        Adjusts the bounding box based on the face's yaw and pitch angles.
+
+        :param landmarks: List of (x, y, z) tuples representing landmarks.
+        :param image_width: Width of the image.
+        :param image_height: Height of the image.
+        :param x_start: Starting x-coordinate of the box.
+        :param y_start: Starting y-coordinate of the box.
+        :param x_end: Ending x-coordinate of the box.
+        :param y_end: Ending y-coordinate of the box.
+        :return: Adjusted coordinates x_start, y_start, x_end, y_end.
+        """
+        box = (x_start, y_start, x_end, y_end)
+
+        # Estimate head pose
+        pose = self.estimate_head_pose(landmarks, (image_height, image_width))
+
+        # If pose estimation fails, return the original box
+        if pose is None:
+            return x_start, y_start, x_end, y_end
+
+        yaw, pitch, roll = pose
+
+        # Adjust the crop box based on the estimated pose
+        adjusted_box = self.adjust_crop_box_for_profile(box, yaw, pitch, image_width, image_height)
+        return adjusted_box
 
     def detect_faces(self, image, p):
         """
@@ -1341,7 +1677,7 @@ class FacePopScript(scripts.Script):
                     else:
                         if self.debug:
                             print(f"[FacePop Debug] Skipping overlapping face at ({x_start}, {y_start}, {box_width}, {box_height})")
-    
+
                     # Stop detecting faces if the maximum number of faces is reached
                     if FacePopState.max_faces > 0 and len(all_faces) >= FacePopState.max_faces:
                         if self.debug:
@@ -1542,39 +1878,47 @@ class FacePopScript(scripts.Script):
 
         return mask_image
 
+
+        
     def rotate_bounding_box(self, bbox, angle, image_shape):
         """
         Rotates a bounding box by the given angle around the center of the image.
         """
         x, y, w, h = bbox
-        x_center = x + w / 2
-        y_center = y + h / 2
-
         (img_h, img_w) = image_shape[:2]
         center = (img_w / 2, img_h / 2)
     
-        # Convert angle to radians and invert for rotation back to original
+        # Define the four corners of the bounding box
+        corners = np.array([
+            [x, y],
+            [x + w, y],
+            [x + w, y + h],
+            [x, y + h]
+        ])
+    
+        # Convert angle to radians
         angle_rad = np.deg2rad(angle)
     
-        # Shift bbox center to origin
-        x_shifted = x_center - center[0]
-        y_shifted = y_center - center[1]
+        # Get rotation matrix
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    
+        # Convert the corners to homogeneous coordinates
+        ones = np.ones(shape=(len(corners), 1))
+        corners_hom = np.hstack([corners, ones])
     
         # Apply rotation matrix
-        cos_a = np.cos(angle_rad)
-        sin_a = np.sin(angle_rad)
-        x_rotated = x_shifted * cos_a - y_shifted * sin_a
-        y_rotated = x_shifted * sin_a + y_shifted * cos_a
+        rotated_corners = M.dot(corners_hom.T).T
     
-        # Shift bbox center back
-        x_rotated += center[0]
-        y_rotated += center[1]
+        # Get the new axis-aligned bounding box
+        x_coords = rotated_corners[:, 0]
+        y_coords = rotated_corners[:, 1]
     
-        # Calculate new top-left corner
-        x_new = int(x_rotated - w / 2)
-        y_new = int(y_rotated - h / 2)
+        x_new = int(np.min(x_coords))
+        y_new = int(np.min(y_coords))
+        w_new = int(np.max(x_coords) - x_new)
+        h_new = int(np.max(y_coords) - y_new)
     
-        return (x_new, y_new, w, h)
+        return (x_new, y_new, w_new, h_new)
 
     def non_max_suppression(self, detections, iou_threshold=0.5):
         if len(detections) == 0:
@@ -1694,7 +2038,7 @@ class FacePopScript(scripts.Script):
                     print(f"[FacePop Debug] Invalid resize dimensions for face #{index+1}: base_w={base_w}, base_h={base_h}, skipping this face.")
                 continue
 
-            # **Step 1**: Extract and smooth the alpha channel of the face image
+            # Step 1: Extract and smooth the alpha channel of the face image
             alpha_face = processed_face_resized[..., 3].astype(np.float32) / 255.0  # Normalize to [0,1]
 
             if FacePopState.modnet_model is not None:
@@ -1709,15 +2053,12 @@ class FacePopScript(scripts.Script):
                 if self.debug:
                     print(f"[FacePop Debug] Skipped Gaussian blur for alpha channel for face #{index+1}")
 
-            # **Step 2**: Generate the radial alpha mask with padding and feathering
+            # Step 2: Generate the radial alpha mask with padding and feathering
             padding = int(w * (FacePopState.padding * .01))
             alpha_radial = self.generate_alpha_mask(base_w, base_h, padding, 10)
 
-            # **Step 3**: Combine the face's alpha channel with the radial mask multiplicatively
+            # Step 3: Combine the face's alpha channel with the radial mask multiplicatively
             combined_alpha = alpha_face_smoothed * alpha_radial
-
-            # **New Step 3.1**: Erode the combined alpha mask by 2 pixels where it meets transparent pixels
-            # This helps eliminate seams by shrinking the mask edges slightly more than before
 
             # Convert combined_alpha to 8-bit for erosion
             alpha_uint8 = (combined_alpha * 255).astype(np.uint8)
@@ -1734,16 +2075,16 @@ class FacePopScript(scripts.Script):
             if self.debug:
                 print(f"[FacePop Debug] Applied 2-pixel erosion to alpha mask for face #{index+1}")
 
-            # **Step 4**: Apply a single Gaussian blur to the eroded_alpha for extra smoothing
+            # Step 4: Apply a single Gaussian blur to the eroded_alpha for extra smoothing
             combined_alpha_blurred = cv2.GaussianBlur(combined_alpha_eroded, (7, 7), 0, borderType=cv2.BORDER_CONSTANT)  # 7x7 kernel for additional smoothing
             combined_alpha_blurred = np.clip(combined_alpha_blurred, 0, 1)
 
-            # **Step 5**: Create a 3-channel alpha mask for blending
+            # Step 5: Create a 3-channel alpha mask for blending
             combined_alpha_3ch = np.dstack([combined_alpha_blurred] * 3)
             if self.debug:
                 print(f"[FacePop Debug] Applied additional Gaussian blur and created 3-channel alpha mask for face #{index+1}")
 
-            # **Step 6**: Blend the processed face onto the base image using the alpha mask
+            # *tep 6: Blend the processed face onto the base image using the alpha mask
             # Convert base_image and processed_face_resized to float32 for blending
             base_region = base_image[y:y+h, x:x+w, :3].astype(np.float32)
             face_region = processed_face_resized[..., :3].astype(np.float32)
@@ -1755,7 +2096,7 @@ class FacePopScript(scripts.Script):
             # Update the base image with the blended region
             base_image[y:y+h, x:x+w, :3] = blended_region
 
-            # **New Step 7**: Update the combined_mask with the eroded and blurred alpha mask
+            # Step 7: Update the combined_mask with the eroded and blurred alpha mask
             # Scale the alpha mask back to 0-255
             face_mask = (combined_alpha_blurred * 255).astype(np.uint8)
 
@@ -2105,19 +2446,24 @@ class FacePopScript(scripts.Script):
     
         # Detect landmarks using MediaPipe Face Mesh
         results = mp_face_mesh.process(face_rgb)
-    
+
         landmarks = []
 
         if results.multi_face_landmarks:
             landmarks = self.extract_landmarks(results, face_image)
         else:
             landmarks = self.aggressive_landmark_detection(face_image)
-    
+
         if landmarks:
-            # Generate masks for eyes and mouth
-            eyes_mouth_mask = self.create_eyes_mouth_mask(landmarks, face_image.shape[:2])
-            return landmarks, eyes_mouth_mask
-    
+            # Generate masks for facial features
+            masks = self.create_feature_masks(landmarks, face_image.shape[:2])
+            if self.debug:
+                print(f"[FacePop Debug] Landmarks detected, masks created.")
+            return landmarks, masks
+        else:
+            if self.debug:
+                print(f"[FacePop Debug] NO LANDMARKS DETECTED!")
+
         return [], None
 
     def aggressive_landmark_detection(self, face_image):
@@ -2172,23 +2518,41 @@ class FacePopScript(scripts.Script):
             print("[FacePop Debug] No landmarks detected after aggressive detection attempts.")
         return []
 
+    def draw_landmarks_on_image(self, image, landmarks):
+        """
+        Draws landmarks on the given image.
+    
+        :param image: The face image as a NumPy array (BGR format).
+        :param landmarks: List of (x, y) tuples representing the landmark points.
+        :return: Image with landmarks drawn on it.
+        """
+        # Create a copy of the image to draw on
+        debug_image = image.copy()
+    
+        # Draw each landmark as a small circle
+        for (x, y, z) in landmarks:
+            cv2.circle(debug_image, (x, y), radius=2, color=(0, 255, 0), thickness=-1)
+    
+        return debug_image
+
     def extract_landmarks(self, results, face_image):
         """
-        Extracts landmarks from MediaPipe's results and converts them to (x, y) format.
-    
+        Extracts landmarks from MediaPipe's results and converts them to (x, y, z) format.
+
         :param results: MediaPipe's face landmark detection results.
         :param face_image: The face image to map the landmarks onto.
-        :return: List of (x, y) tuples representing landmarks.
+        :return: List of (x, y, z) tuples representing landmarks.
         """
         landmarks = []
         img_height, img_width = face_image.shape[:2]
-        
+
         for face_landmarks in results.multi_face_landmarks:
             for landmark in face_landmarks.landmark:
-                x = int(landmark.x * img_width)
-                y = int(landmark.y * img_height)
-                landmarks.append((x, y))
-        
+                x = landmark.x * img_width
+                y = landmark.y * img_height
+                z = landmark.z * img_width  # Scale z appropriately
+                landmarks.append((x, y, z))
+
         return landmarks
 
     def rotate_landmarks_back(self, landmarks, img_width, img_height, angle):
@@ -2207,12 +2571,12 @@ class FacePopScript(scripts.Script):
         angle_rad = np.deg2rad(angle)  # Correct: No need for negative angle
         center_x, center_y = img_width / 2.0, img_height / 2.0
         rotated_landmarks = []
-    
-        for (x, y) in landmarks:
+
+        for (x, y, z) in landmarks:
             # Shift to origin
             x_shifted = x - center_x
             y_shifted = y - center_y
-    
+
             # Apply reverse rotation
             new_x = x_shifted * np.cos(angle_rad) - y_shifted * np.sin(angle_rad)
             new_y = x_shifted * np.sin(angle_rad) + y_shifted * np.cos(angle_rad)
@@ -2225,7 +2589,7 @@ class FacePopScript(scripts.Script):
             new_x = max(0, min(img_width - 1, int(new_x)))
             new_y = max(0, min(img_height - 1, int(new_y)))
     
-            rotated_landmarks.append((new_x, new_y))
+            rotated_landmarks.append((new_x, new_y, z))
     
         return rotated_landmarks
         
@@ -2237,7 +2601,7 @@ class FacePopScript(scripts.Script):
         :param img_height: Height of the image.
         :return: List of flipped (x, y) tuples.
         """
-        return [(x, img_height - y) for (x, y) in landmarks]
+        return [(x, img_height - y) for (x, y, z) in landmarks]
 
     def rotate_image_pil(self, image, angle, flip=False):
         """
@@ -2400,7 +2764,7 @@ class FacePopScript(scripts.Script):
         else:
             # Ensure both masks are the same size by resizing face_mask_pil to match p_image_mask
             if face_mask_pil.size != p_image_mask.size:
-                face_mask_pil = face_mask_pil.resize(p_image_mask.size, Image.NEAREST)
+                face_mask_pil = face_mask_pil.resize(p_image_mask.size, Image.LANCZOS)
     
             # Convert both masks to grayscale NumPy arrays
             mask1 = np.array(p_image_mask.convert('L'))  # Inpaint area (white is inpaint)
@@ -2416,30 +2780,116 @@ class FacePopScript(scripts.Script):
             combined_mask = Image.fromarray(combined)
     
         return combined_mask
-
-    def toggle_scripts(self, able: bool, scripts_list):
+        
+    def last_scripts(self, scripts_list):
         """
         Enable or disable the specified scripts dynamically.
         """
         # Store the original scripts if FacePopState.scripts is empty
         if len(FacePopState.scripts) == 0:
             FacePopState.scripts = copy.copy(scripts.scripts_img2img.alwayson_scripts)
-        
-        if able:
-            # Restore the original scripts
-            scripts.scripts_img2img.alwayson_scripts = copy.copy(FacePopState.scripts)
+    
+        # Initialize the new list and the list for scripts to move to the end
+        new_scripts = []
+        last_scripts = []
+    
+        # Iterate over the always-on scripts
+        for script in scripts.scripts_img2img.alwayson_scripts:
+            if hasattr(script, 'title') and callable(getattr(script, 'title')):
+                if script.title() in scripts_list:
+                    last_scripts.append(script)
+                    if self.debug:
+                        print(f"[FacePop Debug] {script.title()} script moved to last.")
+                else:
+                    new_scripts.append(script)
+    
+        # Append the scripts to be moved to the end of the new list
+        new_scripts.extend(last_scripts)
+    
+        # Update the scripts in FacePopState and the original scripts list
+        scripts.scripts_img2img.alwayson_scripts = new_scripts
+        FacePopState.scripts = copy.copy(scripts.scripts_img2img.alwayson_scripts)
+
+    def remove_scripts(self, scripts_list):
+        """
+        Enable or disable the specified scripts dynamically by rebuilding the scripts list.
+    
+        :param able: Boolean indicating whether to enable (True) or disable (False) the specified scripts.
+        :param scripts_list: List of script names (titles) to enable or disable.
+        """
+        # Initialize FacePopState.scripts with the original alwayson_scripts if it's empty
+        if not FacePopState.scripts:
+            FacePopState.scripts = copy.copy(scripts.scripts_img2img.alwayson_scripts)
             if self.debug:
-                print("[FacePop Debug] Scripts have been restored.")
-        else:
-            # Disable the specified scripts by removing them from the list
-            for script_name in scripts_list:
-                for i, script in enumerate(scripts.scripts_img2img.alwayson_scripts):
-                    if hasattr(script, 'title') and callable(getattr(script, 'title')):
-                        if script.title() == script_name:
-                            scripts.scripts_img2img.alwayson_scripts.pop(i)
-                            if self.debug:
-                                print(f"[FacePop Debug] {script_name} script has been disabled.")
-                            #break
+                print("[FacePop Debug] Original scripts have been stored.")
+
+        # Build a new list excluding the scripts specified in scripts_list
+        new_scripts = []
+        for script in scripts.scripts_img2img.alwayson_scripts:
+            # Check if the script has a callable 'title' method
+            #aaa = script.title()
+            #print(f"[FacePop Debug] img2img: {aaa}")
+            if hasattr(script, 'title') and callable(getattr(script, 'title')):
+                script_title = script.title()
+                if script_title in scripts_list:
+                    if self.debug:
+                        print(f"[FacePop Debug] Disabling script: {script_title}")
+                    continue  # Skip adding this script to the new list
+            # Add the script to the new list if it's not in scripts_list
+            new_scripts.append(script)
+            
+        self.remove_all_scripts()
+
+        # Update the alwayson_scripts with the new list
+        scripts.scripts_img2img.alwayson_scripts = new_scripts
+        if self.debug:
+            print(f"[FacePop Debug] Specified scripts have been disabled: img2img {scripts_list}")
+
+        return
+            
+        new_scripts = []
+        for script in scripts.scripts_txt2img.alwayson_scripts:
+            # Check if the script has a callable 'title' method
+            aaa2 = script.title()
+            print(f"[FacePop Debug] txt2img: {aaa2}")
+            if hasattr(script, 'title') and callable(getattr(script, 'title')):
+                script_title = script.title()
+                if script_title in scripts_list:
+                    if self.debug:
+                        print(f"[FacePop Debug] Disabling script: {script_title}")
+                    continue  # Skip adding this script to the new list
+            # Add the script to the new list if it's not in scripts_list
+            new_scripts.append(script)
+
+        # Update the alwayson_scripts with the new list
+        scripts.scripts_txt2img.alwayson_scripts = new_scripts
+        if self.debug:
+            print(f"[FacePop Debug] Specified scripts have been disabled: txt2img {scripts_list}")
+
+    def restore_all_scripts(self):
+        # Restore the original scripts
+        scripts.scripts_img2img.alwayson_scripts = []
+        scripts.scripts_img2img.alwayson_scripts = copy.copy(FacePopState.scripts)
+        if self.debug:
+            print("[FacePop Debug] Scripts have been restored.")
+
+    def remove_all_scripts(self):
+        """
+        Enable or disable the specified scripts dynamically.
+        """
+        # Store the original scripts if FacePopState.scripts is empty
+        if len(FacePopState.scripts) == 0:
+            FacePopState.scripts = copy.copy(scripts.scripts_img2img.alwayson_scripts)
+
+        scripts.scripts_img2img.alwayson_scripts = [
+            script for script in scripts.scripts_img2img.alwayson_scripts
+            if hasattr(script, 'title') and callable(getattr(script, 'title')) and script.title() == 'FacePop'
+        ]
+
+        # Debugging output
+        if self.debug:
+            for script in scripts.scripts_img2img.alwayson_scripts:
+                print(f"[FacePop Debug] {script.title()} script is the only one enabled.")
 
     def load_scripts_from_file(self, file_path):
         """
@@ -2463,43 +2913,102 @@ class FacePopScript(scripts.Script):
             print(f"[FacePop Debug] File {file_path} does not exist.")
 
         return scripts_dict
-        
-    def create_eyes_mouth_mask(self, landmarks, image_shape):
-        # Indices for facial features
-        left_eye_indices = [33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7]
-        right_eye_indices = [263, 466, 388, 387, 386, 385, 384, 398, 362, 382, 381, 380, 374, 373, 390, 249]
-        # Combined upper and lower outer lip indices
-        mouth_indices = [
-            61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,       # Upper outer lip (from left to right)
-            375, 321, 405, 314, 17, 84, 181, 91, 146               # Lower outer lip (from right to left)
-        ]
-        
-        # Combined upper and lower inner lip indices
-        mouth_inner_indices = [
-            78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308,      # Upper inner lip (from left to right)
-            324, 318, 402, 317, 14, 87, 178, 88, 95                # Lower inner lip (from right to left)
-        ]
 
-        # Extract points for each feature
-        left_eye_points = [landmarks[i] for i in left_eye_indices]
-        right_eye_points = [landmarks[i] for i in right_eye_indices]
-        mouth_points = [landmarks[i] for i in mouth_indices]
+    def create_feature_masks(self, landmarks, image_shape):
+        """
+        Creates masks for facial features: mouth, eyes
+
+        :param landmarks: List of (x, y) tuples representing landmarks.
+        :param image_shape: Tuple (height, width) of the image.
+        :return: Dictionary of masks.
+        """
+        # Indices for facial features
+        # Mouth indices (outer lips)
+        mouth_indices = [
+            61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,
+            375, 321, 405, 314, 17, 84, 181, 91, 146
+        ]
     
-        # Create an empty mask
+        # Left eye indices
+        left_eye_indices = [33, 246, 161, 160, 159, 158, 157, 173,
+                            133, 155, 154, 153, 145, 144, 163, 7]
+    
+        # Right eye indices
+        right_eye_indices = [263, 466, 388, 387, 386, 385, 384, 398,
+                             362, 382, 381, 380, 374, 373, 390, 249]
+    
+        # Updated Left Iris indices (excluding the first point which is the pupil center)
+        left_iris_indices = [469, 470, 471, 472]  # Points forming the left iris
+        left_pupil_center_index = 468  # Pupil center
+    
+        # Updated Right Iris indices (excluding the first point which is the pupil center)
+        right_iris_indices = [474, 475, 476, 477]  # Points forming the right iris
+        right_pupil_center_index = 473  # Pupil center
+
+        # Compute convex hull for the entire face
+        #print(landmarks)
+        #face_convex_hull = cv2.convexHull(np.array(landmarks, dtype=np.int32))
+    
+        # Initialize masks with white background
         img_height, img_width = image_shape
-        mask = np.ones((img_height, img_width), dtype=np.uint8) * 255  # All white mask
+        mouth_mask = np.ones((img_height, img_width), dtype=np.uint8) * 255
+        eyes_mask = np.ones((img_height, img_width), dtype=np.uint8) * 255
+
+        # Step 1: Create an eye region mask to prevent overlap
+        eye_region_mask = np.ones((img_height, img_width), dtype=np.uint8) * 255  # White background
     
-        # Convert points to NumPy arrays
-        left_eye_contour = np.array(left_eye_points, dtype=np.int32)
-        right_eye_contour = np.array(right_eye_points, dtype=np.int32)
-        mouth_contour = np.array(mouth_points, dtype=np.int32)
+        # Extract points for each feature
+        mouth_points = np.array([(int(landmarks[i][0]), int(landmarks[i][1])) for i in mouth_indices], dtype=np.int32)
+        left_eye_points = np.array([(int(landmarks[i][0]), int(landmarks[i][1])) for i in left_eye_indices], dtype=np.int32)
+        right_eye_points = np.array([(int(landmarks[i][0]), int(landmarks[i][1])) for i in right_eye_indices], dtype=np.int32)
+        left_iris_points = np.array([(int(landmarks[i][0]), int(landmarks[i][1])) for i in left_iris_indices], dtype=np.int32)
+        right_iris_points = np.array([(int(landmarks[i][0]), int(landmarks[i][1])) for i in right_iris_indices], dtype=np.int32)
+        left_pupil_center = np.array([int(landmarks[left_pupil_center_index][0]), int(landmarks[left_pupil_center_index][1])], dtype=np.int32)
+        right_pupil_center = np.array([int(landmarks[right_pupil_center_index][0]), int(landmarks[right_pupil_center_index][1])], dtype=np.int32)
+
+        # Step 2: Fill the eyes with black in the eye_region_mask (no iris or pupil here)
+        cv2.fillPoly(eye_region_mask, [left_eye_points], 0)
+        cv2.fillPoly(eye_region_mask, [right_eye_points], 0)
+
+        # Step 3: Fill the polygons on the masks with black (0)
+        cv2.fillPoly(mouth_mask, [mouth_points], 0)
+        cv2.fillPoly(eyes_mask, [left_eye_points], 0)
+        cv2.fillPoly(eyes_mask, [right_eye_points], 0)
+
+        # Return masks in a dictionary
+        masks = {
+            'mouth_mask': mouth_mask,
+            'eyes_mask': eyes_mask,
+        }
     
-        # Fill the polygons on the mask
-        cv2.fillPoly(mask, [left_eye_contour], 0)
-        cv2.fillPoly(mask, [right_eye_contour], 0)
-        cv2.fillPoly(mask, [mouth_contour], 0)
+        return masks
+
+
+    def create_feathered_mask(self, face_mask, feather_radius=11):
+        """
+        Creates a feathered mask by applying a Gaussian blur to the face mask and
+        ensuring that the original black pixels remain fully black.
+        
+        :param face_mask: Binary mask (numpy array), face area is 0, background is 255.
+        :param feather_radius: Determines the strength of the Gaussian blur.
+        :return: Feathered mask as a uint8 image (values from 0 to 255).
+        """
+        # Apply Gaussian blur to create a blurred version of the mask
+        # The kernel size should be odd and proportional to the feather_radius
+        # For example, kernel size = 2 * feather_radius + 1
+        #kernel_size = 2 * feather_radius + 1
+        blurred_mask = cv2.GaussianBlur(face_mask, (feather_radius, feather_radius), 0)#, borderType=cv2.BORDER_CONSTANT)
     
-        return mask
+        # Ensure the blurred mask retains the background as white and the face area as a gradient
+        # Since the face area is 0, blurring will create a gradient around it
+    
+        # Create a copy of the blurred mask to overlay the original black pixels
+        feathered_mask = blurred_mask.copy()
+
+        # Set the face area back to black (0)
+        feathered_mask[face_mask == 0] = 0
+    
+        return feathered_mask
 
     def postprocess_image(self, p, *args):
         if not FacePopState.enabled:
@@ -2556,5 +3065,144 @@ class FacePopScript(scripts.Script):
         if self.debug:
             os.makedirs(FacePopState.debug_path, exist_ok=True)  # Create the debug directory if it doesn't exist
         return FacePopState.debug_path
+
+
+    def do_eyes(self, original_face_image, processed_face_image):
+        """
+        Replaces the eyes in the processed_face_image with the original eyes from the original_face_image.
+        The original eye regions are stretched or resized to fit the new size and position based on the landmarks,
+        and the original eyes are made slightly larger by 1 pixel in each direction.
+        
+        :param original_face_image: The original face image (in PIL format) before any processing.
+        :param processed_face_image: The face image (in PIL format) after processing (post-process).
+        :return: The processed face image with restored eyes from the original image.
+        """
+    
+        # Step 1: Detect landmarks and masks in both the original and processed images
+        landmarks, xxxmasks = self.detect_landmarks(np.array(original_face_image))
+        landmarks2, masks = self.detect_landmarks(np.array(processed_face_image))
+    
+        if not landmarks2:
+            if self.debug:
+                print("[FacePop Debug] No landmarks detected in the processed image.")
+            return processed_face_image  # Return original image if no landmarks are found
+    
+        eyes_mask = masks.get('eyes_mask')
+        if eyes_mask is None:
+            if self.debug:
+                print("[FacePop Debug] No eye mask found in the processed image.")
+            return processed_face_image  # Return original image if no eye mask is found
+    
+        eyes_mask_pil = Image.fromarray(eyes_mask).convert('L')
+    
+        # Create a copy of the processed face image to work on
+        modified_face_image = processed_face_image.copy()
+    
+        # Step 2: Get bounding boxes for the left and right eyes in the original image
+        left_eye_box = self.get_eye_bounding_box(landmarks, 'left')  # Original landmarks
+        right_eye_box = self.get_eye_bounding_box(landmarks, 'right')
+    
+        left_eye_image = original_face_image.crop(left_eye_box)
+        right_eye_image = original_face_image.crop(right_eye_box)
+    
+        # Step 3: Get new bounding boxes for the left and right eyes from the processed image landmarks
+        left_eye_box2 = self.get_eye_bounding_box(landmarks2, 'left')  # Post-process landmarks
+        right_eye_box2 = self.get_eye_bounding_box(landmarks2, 'right')
+    
+        # Step 4: Expand the bounding boxes by 2 pixels in each direction
+        def expand_box(box, padding=2, image_size=None):
+            x_min, y_min, x_max, y_max = box
+            if image_size:
+                img_width, img_height = image_size
+            else:
+                img_width, img_height = None, None
+            x_min = max(x_min - padding, 0)
+            y_min = max(y_min - padding, 0)
+            x_max = min(x_max + padding, img_width) if img_width else x_max + padding
+            y_max = min(y_max + padding, img_height) if img_height else y_max + padding
+            return (int(x_min), int(y_min), int(x_max), int(y_max))
+    
+        left_eye_box_expanded = expand_box(left_eye_box2, padding=2, image_size=processed_face_image.size)
+        right_eye_box_expanded = expand_box(right_eye_box2, padding=2, image_size=processed_face_image.size)
+    
+        # Step 5: Resize the original eye images to fit the expanded bounding boxes
+        left_eye_size = (left_eye_box_expanded[2] - left_eye_box_expanded[0], left_eye_box_expanded[3] - left_eye_box_expanded[1])
+        right_eye_size = (right_eye_box_expanded[2] - right_eye_box_expanded[0], right_eye_box_expanded[3] - right_eye_box_expanded[1])
+    
+        left_eye_resized = left_eye_image.resize(left_eye_size, Image.LANCZOS)
+        right_eye_resized = right_eye_image.resize(right_eye_size, Image.LANCZOS)
+
+        # Step 6: Paste the resized original eyes onto the processed face image at the correct positions
+        modified_face_image.paste(left_eye_resized, (left_eye_box_expanded[0], left_eye_box_expanded[1]), left_eye_resized)
+        modified_face_image.paste(right_eye_resized, (right_eye_box_expanded[0], right_eye_box_expanded[1]), right_eye_resized)
+    
+        # Step 7: Invert the eye mask and paste the processed face image over the non-eye regions
+        #inverted_mask = ImageChops.invert(eyes_mask_pil)
+        modified_face_image.paste(processed_face_image, (0, 0), eyes_mask_pil)
+
+        # If separate eye processing is enabled, apply additional processing
+        if FacePopState.eyes_separate_proc:
+            # Step 7: Prepare the eye image for separate processing
+            p_copy = copy.copy(FacePopState.first_p)  # Copy original processing parameters
+            p_copy.init_images = [modified_face_image]
+            p_copy.width = modified_face_image.width
+            p_copy.height = modified_face_image.height
+            p_copy.steps = FacePopState.eyes_sampling_steps
+            p_copy.cfg_scale = FacePopState.eyes_cfg_scale
+            p_copy.denoising_strength = FacePopState.eyes_denoising
+            p_copy.prompt = FacePopState.eyes_prompt if FacePopState.eyes_prompt else ""
+            p_copy.negative_prompt = FacePopState.eyes_neg if FacePopState.eyes_neg else ""
+    
+            # Process the eyes using separate settings
+            FacePopState.is_processing_faces = True
+            processed_copy = process_images(p_copy)
+            time.sleep(2) # allow cooldown
+            FacePopState.is_processing_faces = False
+    
+            processed_image = processed_copy.images[0].resize(modified_face_image.size, Image.LANCZOS)
+    
+            # Final step: Overlay the processed eyes onto the modified face image
+            modified_face_image.paste(processed_image, (0, 0), eyes_mask_pil)
+
+        # Convert modified_face_image back to numpy array before returning
+        return np.array(modified_face_image)
+    
+    def get_eye_bounding_box(self, landmarks, eye_side):
+        """
+        Get the bounding box for the left or right eye based on the landmarks.
+    
+        :param landmarks: The facial landmarks.
+        :param eye_side: Either 'left' or 'right', to specify which eye's bounding box to return.
+        :return: A tuple (x_min, y_min, x_max, y_max) representing the bounding box of the eye.
+        """
+        if eye_side == 'left':
+            eye_indices = [33, 133, 159, 145]  # Approximate corner landmarks for the left eye
+        else:
+            eye_indices = [362, 263, 386, 374]  # Approximate corner landmarks for the right eye
+    
+        x_coords = [landmarks[i][0] for i in eye_indices]
+        y_coords = [landmarks[i][1] for i in eye_indices]
+
+        x_min = min(x_coords)
+        y_min = min(y_coords)
+        x_max = max(x_coords)
+        y_max = max(y_coords)
+    
+        return (x_min, y_min, x_max, y_max)
+        
+    #def dump_p(self, p, filename):
+    #    # Create the file path with the timestamp
+    #    dump_file_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_{filename}.txt")
+    #    # Dump the attributes to a text file with UTF-8 encoding
+    #    with open(dump_file_path, 'w', encoding='utf-8') as file:
+    #        pp = pprint.PrettyPrinter(indent=4)  # Pretty printer with 4-space indentation
+    #        p_attributes = vars(p)  # Get the __dict__ of the 'p' object (all its attributes)
+    #        file.write("[FacePop] Dumping 'p' object attributes:\n\n")
+    #        file.write(pp.pformat(p_attributes))  # Write formatted attributes to the file
+        # Optional: Log the file location
+    #    print(f"[FacePop] 'p' object attributes dumped to {dump_file_path}")
+
+
+
 
 ### EOF

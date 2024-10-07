@@ -1,5 +1,5 @@
 # FacePop
-(Version 1.1.2)
+(Version 1.2.0)
 
 ![FacePop Logo](resources/logo.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
@@ -91,6 +91,7 @@ By handling faces in a structured and efficient way, **FacePop** helps you achie
 - **ControlNet Integration**: Supports ControlNet for advanced image manipulation if installed.
 - **Customizable Settings**: Provides a comprehensive UI with adjustable parameters for tailored processing.
 - **Debugging Tools**: Includes debugging features to help troubleshoot and optimize processing steps.
+- **Restore Eyes (NEW!)**: Restore the eyes to the original image. This is still being worked on and not very good yet.
 
 ## Installation
 
@@ -178,7 +179,7 @@ ReActor
 
 ## Screenshots
 
-![FacePop UI Panel](resources/ui_screenshot.png)
+![FacePop UI Panel](resources/ui_screenshot2.png)
 *Figure 1: FacePop panel within the Img2Img interface.*
 
 ![Before and After](resources/before_after.png)
@@ -279,6 +280,8 @@ Permission is hereby granted, free of charge, to any person obtaining a copy
 ```
 ---
 ## **Updates**
+
+[10-07-2024] Bug Fixes, Retooled lots of stuff, added Restore Eyes (version 1.2.0)
 
 [09-24-2024] Fixed some Inpainting issues (version 1.1.2)
 
