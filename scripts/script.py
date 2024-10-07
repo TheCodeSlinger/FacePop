@@ -284,17 +284,6 @@ class FacePopScript(scripts.Script):
         if not is_img2img:
             return None
 
-        # Include inline CSS using gr.HTML
-        css = """
-        <style>
-        #facepop_accordion .gr-accordion-content {
-            background-color: purple;
-            color: white;
-        }
-        </style>
-        """
-        css_html = gr.HTML(css)
-
         with gr.Accordion("FacePop", open=False, elem_id="facepop_accordion"):
             # --------------------- Basic Features ---------------------
             with gr.Group():
@@ -375,7 +364,7 @@ class FacePopScript(scripts.Script):
                     with gr.Row():
                         debug = gr.Checkbox(label="Enable Debugging", value=False, interactive=True)  # Enable debugging
                         output_faces_checkbox = gr.Checkbox(label="Output Faces", value=True, interactive=True)  # Output individual faces
-    
+
         return [
             enabled,  # Enable FacePop
             modnet_checkbox,  # Use MODNet
