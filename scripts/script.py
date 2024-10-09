@@ -21,7 +21,6 @@ from modnet.models.modnet import MODNet
 # Import the process_images function
 from modules.processing import process_images, StableDiffusionProcessingImg2Img
 
-
 # Initialize Mediapipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.9)
 
@@ -91,7 +90,7 @@ class FacePopState:
 
     @staticmethod
     def reset():
-        print('[FacePop Debug] [[[[[[[ RESET() ]]]]]]]')
+        #print('[FacePop Debug] [[[[[[[ RESET() ]]]]]]]')
         """Reset all static variables to their default state."""
         FacePopState.original_image = np.zeros((512, 512, 3), dtype=np.uint8)
         FacePopState.is_processing_faces = False
@@ -542,7 +541,7 @@ class FacePopScript(scripts.Script):
                 print(f"[FacePop Debug] Timestamp for file names: {FacePopState.timestamp}")
 
         # Dumping 'p' object to a .txt file if debug is enabled
-        dump_debugger = False
+        #dump_debugger = True
         #if self.debug and dump_debugger:
         #    # Create the file path with the timestamp
         #    dump_file_path = os.path.join(self.debug_path(), f"p_dump_{FacePopState.timestamp}.txt")
@@ -552,7 +551,7 @@ class FacePopScript(scripts.Script):
         #        p_attributes = vars(p)  # Get the __dict__ of the 'p' object (all its attributes)
         #        file.write("[FacePop Debug] Dumping 'p' object attributes:\n\n")
         #        file.write(pp.pformat(p_attributes))  # Write formatted attributes to the file
-            # Optional: Log the file location
+        #    # Optional: Log the file location
         #    print(f"[FacePop Debug] 'p' object attributes dumped to {dump_file_path}")
 
         # Assign the slider values to the instance
@@ -3159,7 +3158,7 @@ class FacePopScript(scripts.Script):
     def get_eye_bounding_box(self, landmarks, eye_side):
         """
         Get the bounding box for the left or right eye based on the landmarks.
-    
+
         :param landmarks: The facial landmarks.
         :param eye_side: Either 'left' or 'right', to specify which eye's bounding box to return.
         :return: A tuple (x_min, y_min, x_max, y_max) representing the bounding box of the eye.
