@@ -1,5 +1,5 @@
 # FacePop
-(Version 1.2.2)
+(Version 1.2.3)
 
 ![FacePop Logo](resources/logo.png)
 *<!-- Note: Add a logo image here, e.g., `images/logo.png` -->*
@@ -273,13 +273,18 @@ All these are already included, you don't need to go donwload them unless you wa
 ```text
 MIT License
 
-Copyright (c) 2024 TheCodeSlinger
+Copyright (c) 2025 TheCodeSlinger
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 ...
 ```
 ---
 ## **Updates**
+NOTE: Separate Eyes Processing is still a WIP.
+
+[6-7-2025] A years worth of updates. Restore Eyes removed. New features such as Pre-pass added, better scaling and rotation systems. (version 2.0.0)
+
+[10-14-2024] Bug Fixes, added Seed to Separate Face Processing and Separate Eyes Processing (version 1.2.2)
 
 [10-07-2024] Bug Fixes, Retooled lots of stuff, added Restore Eyes (version 1.2.0)
 

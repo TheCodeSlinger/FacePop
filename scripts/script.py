@@ -4,12 +4,15 @@ import gradio as gr
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageChops
+from PIL.PngImagePlugin import PngInfo
 import importlib
 import copy
 import math
 from math import degrees
 import datetime
 import time
+import json
+
 
 import mediapipe as mp
 import torch
@@ -35,6 +38,7 @@ class FacePopState:
     is_processing_faces = False  # Flag indicating if face processing is currently ongoing
     first_p = None  # The first processing object, possibly storing pipeline parameters
     first_cn_list = None  # List related to ControlNet processing
+    active_control_nets = None #
     processed_faces = []  # List of processed face images and their metadata
     faces = []  # List of detected face coordinates
     controlNetModule = None  # ControlNet module instance, if loaded
@@ -73,20 +77,19 @@ class FacePopState:
     deny_scripts_dict = {}  # Dictionary to manage script enabling/disabling
     upscale_to_original = False # Final Composite image will be saved to scale (after processing) of original source
     face_separate_proc = False # Use different processing settings for faces than what is used for final composite image
+    face_seed = -1
     face_sampling_steps = 34 # separate face sampling steps
     face_cfg_scale = 7.0 # separate face CFG scale
     face_denoising = 0.36 # separate face denoising strength
     ssd_model_loaded = False
-    eyes_separate_proc = False # Use different processing settings for faces than what is used for final composite image
-    eyes_sampling_steps = 34 # separat face sampling steps
-    eyes_denoising = 0.32 # separate face denoising strength
-    eyes_cfg_scale = 7.0 # separate face CFG scale
-    eyes_use = False
-    eyes_prompt = ""
-    eyes_neg = ""
     face_prompt = ""
     face_neg = ""
     ignore_inpaint_final = False
+    reactorpass = False
+    reactorpass_prompt = ""
+    reactorpass_cn12 = False
+    reactorpass_cn12_cfg = -1
+    reactorpass_cn12_denoise = -1
 
     @staticmethod
     def reset():
@@ -96,6 +99,7 @@ class FacePopState:
         FacePopState.is_processing_faces = False
         #FacePopState.first_p = None
         FacePopState.first_cn_list = None
+        FacePopState.active_control_nets = None
         FacePopState.processed_faces = []
         FacePopState.faces = []
         FacePopState.total_faces = 0
@@ -128,19 +132,26 @@ class FacePopState:
         FacePopState.deny_scripts_dict = {}
         FacePopState.upscale_to_original = False
         FacePopState.face_separate_proc = False
+        FacePopState.face_seed = -1
         FacePopState.face_sampling_steps = 40
         FacePopState.face_cfg_scale = 7.0
         FacePopState.face_denoising = 0.4
-        FacePopState.eyes_separate_proc = False # Use different processing settings for faces than what is used for final composite image
-        FacePopState.eyes_sampling_steps = 34 # separate face sampling steps
-        FacePopState.eyes_denoising = 0.32 # separate face denoising strength
-        FacePopState.eyes_cfg_scale = 7.0 # separate face CFG scale
-        FacePopState.eyes_use = False
-        FacePopState.eyes_prompt = ""
-        FacePopState.eyes_neg = ""
         FacePopState.face_prompt = ""
         FacePopState.face_neg = ""
         FacePopState.ignore_inpaint_final = False
+        FacePopState.reactorpass = False
+        FacePopState.reactorpass_prompt = ""
+        FacePopState.reactorpass_cn12 = False
+        FacePopState.reactorpass_cn12_cfg = -1
+        FacePopState.reactorpass_cn12_denoise = -1
+        FacePopState.cn1_checkbox = True
+        FacePopState.cn2_checkbox = True
+        FacePopState.cn3_checkbox = True
+        FacePopState.cn4_checkbox = True
+        FacePopState.scn1_checkbox = True
+        FacePopState.scn2_checkbox = True
+        FacePopState.scn3_checkbox = True
+        FacePopState.scn4_checkbox = True
         # FacePopState.preview_images = []
         # ControlNetModule should not be reset as it's likely loaded once and reused.
         # FacePopState.ssd_model_loaded = False
@@ -310,9 +321,13 @@ class FacePopScript(scripts.Script):
             # --------------------- Separate Face Processing Section ---------------------
             with gr.Accordion("Separate Face Processing", open=False):
                 with gr.Group():
-                    separate_face_processing_checkbox = gr.Checkbox(label="Separate Face Processing", value=False, interactive=True)  # Enable separate face processing
-                    sampling_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, label="Sampling Steps for Face Processing", value=40, interactive=True)  # Sampling steps for faces
-    
+                    with gr.Row():
+                        separate_face_processing_checkbox = gr.Checkbox(label="Separate Face Processing", value=False, interactive=True)  # Enable separate face processing
+
+                    with gr.Row():
+                        face_seed = gr.Textbox(label="Face Seed", value="-1", interactive=True)
+                        sampling_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, label="Sampling Steps for Face Processing", value=40, interactive=True)  # Sampling steps for faces
+
                     # CFG Scale and Denoising Strength in one row
                     with gr.Row():
                         cfg_scale_slider = gr.Slider(minimum=0.0, maximum=30.0, step=0.5, label="CFG Scale for Face Processing", value=7.0, interactive=True)  # CFG Scale for faces
@@ -323,23 +338,17 @@ class FacePopScript(scripts.Script):
                     face_prompt = gr.Textbox(label="Face Prompt", value="", interactive=True)  # Default prompt
                     face_neg = gr.Textbox(label="Face Negative Prompt", value="", interactive=True)  # Default negative prompt
 
-            # --------------------- Restore Eyes Section ---------------------
-            with gr.Accordion("Restore Eyes and Processing", open=False):
-                # Row for eye-related controls
-                with gr.Row():
-                    eyes_use = gr.Checkbox(label="Restore Eyes", value=False, interactive=True)
-                    eyes_separate_proc = gr.Checkbox(label="Separate Process For Eyes", value=True, interactive=True)
-            
-                # Sampling steps, denoising, and CFG scale sliders
-                with gr.Row():
-                    eyes_sampling_steps = gr.Slider(minimum=1, maximum=100, step=1, label="Sampling Steps", value=34, interactive=True)
-                    eyes_denoising = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label="Denoising", value=0.32, interactive=True)
-                    eyes_cfg_scale = gr.Slider(minimum=1.0, maximum=20.0, step=0.5, label="CFG Scale", value=7.0, interactive=True)
-            
-                # Textboxes for prompts and negative prompts
-                with gr.Row():
-                    eyes_prompt = gr.Textbox(label="Eyes Prompt", value="(perfect detailed eyes:1.3) (clear iris:1.2) (clear pupil:1.2)", interactive=True)  # Default prompt
-                    eyes_neg = gr.Textbox(label="Eyes Negative Prompt", value="bad eyes", interactive=True)  # Default negative prompt
+            # --------------------- Reactor Settings Section ---------------------
+            with gr.Accordion("Pre-Pass", open=False):
+                with gr.Group():
+                    with gr.Row():
+                         reactorpass_checkbox = gr.Checkbox(label="Pre-Pass", value=False, interactive=True)
+                         reactorpass_cn12_checkbox = gr.Checkbox(label="Control Net 1 then 2+", value=False, interactive=True)
+                         reactorpass_prompt_text = gr.Textbox(label="Reactor Only Prompt", value="", interactive=True)  # Default prompt
+
+                    with gr.Row():
+                         reactorpass_cn12_cfg_slider = gr.Slider(minimum=0.0, maximum=30.0, step=0.5, label="CFG Scale", value=0.0, interactive=True)  # CFG Scale for faces
+                         reactorpass_cn12_denoise_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label="Denoising Strength", value=0.0, interactive=True)  # Denoising strength for faces
 
             # --------------------- Advanced Settings Section ---------------------
             with gr.Accordion("Advanced Settings", open=False):
@@ -351,11 +360,23 @@ class FacePopScript(scripts.Script):
                         ignore_inpaint_final = gr.Checkbox(label="Ignore Inpaint on Final", value=False, interactive=True)  # Upscale to original source
                     # Image Enhancement Method and Rotation Angle Threshold on the same line
                     with gr.Row():
-                        enhancement_dropdown = gr.Dropdown(choices=["Unsharp Mask", "Bilateral Filter", "Median Filter", "Hybrid"], label="Image Enhancement Method", value="Unsharp Mask", interactive=True)  # Enhancement method
+                        enhancement_dropdown = gr.Dropdown(choices=["None", "Unsharp Mask", "Bilateral Filter", "Median Filter", "Hybrid"], label="Image Enhancement Method", value="Unsharp Mask", interactive=True)  # Enhancement method
                         rotation_angle_slider = gr.Slider(minimum=0, maximum=45, step=1, label="Rotation Angle Threshold (degrees)", value=10, interactive=True)  # Rotation angle threshold
                     # Custom Output Path
                     output_path = gr.Textbox(label="Custom Output Path", value="[date]", placeholder="Enter a custom path (use [date] for current date)", interactive=True)  # Custom output path
     
+                    with gr.Row():
+                        cn1_checkbox = gr.Checkbox(label="CN1", value=True, interactive=True)  # ControlNet 1
+                        cn2_checkbox = gr.Checkbox(label="CN2", value=True, interactive=True)  # ControlNet 2
+                        cn3_checkbox = gr.Checkbox(label="CN3", value=True, interactive=True)  # ControlNet 3
+                        cn4_checkbox = gr.Checkbox(label="CN4", value=True, interactive=True)  # ControlNet 4
+                        
+                    with gr.Row():
+                        scn1_checkbox = gr.Checkbox(label="SCN1", value=True, interactive=True)  # ControlNet 1
+                        scn2_checkbox = gr.Checkbox(label="SCN2", value=True, interactive=True)  # ControlNet 2
+                        scn3_checkbox = gr.Checkbox(label="SCN3", value=True, interactive=True)  # ControlNet 3
+                        scn4_checkbox = gr.Checkbox(label="SCN4", value=True, interactive=True)  # ControlNet 4
+
             # --------------------- Debugging Section ---------------------
             with gr.Accordion("Debugging", open=False):
                 with gr.Group():
@@ -374,7 +395,6 @@ class FacePopScript(scripts.Script):
             keep_ratio_checkbox,  # Maintain Aspect Ratio
             confidence_slider,  # Confidence Threshold
             max_faces_slider,  # Max Faces
-            eyes_use, # use custom eyes
             debug,  # Enable Debugging
             output_faces_checkbox,  # Output Faces
             auto_align_faces_checkbox,  # Auto-Align Faces
@@ -384,30 +404,39 @@ class FacePopScript(scripts.Script):
             output_path,  # Custom Output Path
             separate_face_processing_checkbox,  # Separate Face Processing
             sampling_steps_slider,  # Sampling Steps for Face Processing
+            face_seed,
             cfg_scale_slider,  # CFG Scale for Face Processing
             denoising_strength_slider,  # Denoising Strength for Face Processing
-            eyes_separate_proc,
-            eyes_sampling_steps,
-            eyes_denoising,
-            eyes_cfg_scale,
-            eyes_prompt,  # Eyes prompt textbox
-            eyes_neg,      # Eyes negative prompt textbox
             face_prompt,  # Eyes prompt textbox
             face_neg,      # Eyes negative prompt textbox
-            ignore_inpaint_final
+            ignore_inpaint_final,
+            cn1_checkbox,
+            cn2_checkbox,
+            cn3_checkbox,
+            cn4_checkbox,
+            scn1_checkbox,
+            scn2_checkbox,
+            scn3_checkbox,
+            scn4_checkbox,
+            reactorpass_checkbox,
+            reactorpass_cn12_checkbox,
+            reactorpass_prompt_text,
+            reactorpass_cn12_cfg_slider,
+            reactorpass_cn12_denoise_slider
         ]
 
 
     def process(self, p, enabled=True, modnet_checkbox=True, aggressive_detection_checkbox=True,
                 scale_width_slider=1.0, scale_height_slider=1.0, padding_slider=0,
                 keep_ratio_checkbox=True, confidence_slider=0.5, max_faces_slider=5,
-                eyes_use = False, # New parameters for eye control
                 debug=False, output_faces_checkbox=True, auto_align_faces_checkbox=True,
                 upscale_to_original_source_checkbox=True, enhancement_dropdown="None",
                 rotation_angle_slider=0.0, output_path="", separate_face_processing_checkbox=False,
-                sampling_steps_slider=20, cfg_scale_slider=7.0, denoising_strength_slider=0.75,
-                eyes_separate_proc=True, eyes_sampling_steps=34, eyes_denoising=.33, eyes_cfg_scale=7.0,
-                eyes_prompt="", eyes_neg="", face_prompt="", face_neg="", ignore_inpaint_final=False):
+                sampling_steps_slider=20, face_seed=-1, cfg_scale_slider=7.0, denoising_strength_slider=0.75,
+                face_prompt="", face_neg="", ignore_inpaint_final=False,
+                cn1_checkbox=True, cn2_checkbox=True, cn3_checkbox=True, cn4_checkbox=True,
+                scn1_checkbox=True, scn2_checkbox=True, scn3_checkbox=True, scn4_checkbox=True, reactorpass_checkbox=True, reactorpass_cn12_checkbox=True, reactorpass_prompt_text="",
+                reactorpass_cn12_cfg_slider=-1, reactorpass_cn12_denoise_slider=-1):
     # Method implementation
         """
         Main processing method that handles face detection, enhancement, and other operations.
@@ -570,17 +599,24 @@ class FacePopScript(scripts.Script):
         FacePopState.face_separate_proc = separate_face_processing_checkbox
         FacePopState.face_sampling_steps = sampling_steps_slider
         FacePopState.face_cfg_scale = cfg_scale_slider
+        FacePopState.face_seed = face_seed
         FacePopState.face_denoising = denoising_strength_slider
-        FacePopState.eyes_use = eyes_use
-        FacePopState.eyes_sampling_steps = eyes_sampling_steps
-        FacePopState.eyes_denoising = eyes_denoising
-        FacePopState.eyes_cfg_scale = eyes_cfg_scale
-        FacePopState.eyes_separate_proc = eyes_separate_proc
-        FacePopState.eyes_prompt = eyes_prompt
-        FacePopState.eyes_neg = eyes_neg
         FacePopState.face_prompt = face_prompt
         FacePopState.face_neg = face_neg
         FacePopState.ignore_inpaint_final = ignore_inpaint_final
+        FacePopState.cn1_checkbox = cn1_checkbox
+        FacePopState.cn2_checkbox = cn2_checkbox
+        FacePopState.cn3_checkbox = cn3_checkbox
+        FacePopState.cn4_checkbox = cn4_checkbox
+        FacePopState.scn1_checkbox = scn1_checkbox
+        FacePopState.scn2_checkbox = scn2_checkbox
+        FacePopState.scn3_checkbox = scn3_checkbox
+        FacePopState.scn4_checkbox = scn4_checkbox
+        FacePopState.reactorpass = reactorpass_checkbox
+        FacePopState.reactorpass_cn12 = reactorpass_cn12_checkbox
+        FacePopState.reactorpass_prompt = reactorpass_prompt_text
+        FacePopState.reactorpass_cn12_cfg = reactorpass_cn12_cfg_slider
+        FacePopState.reactorpass_cn12_denoise = reactorpass_cn12_denoise_slider
 
         # Capture the actual original image dimensions before any processing
         if FacePopState.proc_width == 0:
@@ -611,7 +647,8 @@ class FacePopScript(scripts.Script):
             # If an inpainting mask exists, we need to apply it to init_image
             if p.image_mask is not None:
                 # Ensure the mask is the same size as the init_image
-                mask = np.array(p.image_mask)
+                #mask = np.array(p.image_mask)
+                mask = np.array(p.image_mask.convert("L"))  # Convert to grayscale (1 channel)
                 if mask.shape[:2] != init_image.shape[:2]:
                     mask = cv2.resize(mask, (init_image.shape[1], init_image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
@@ -653,6 +690,26 @@ class FacePopScript(scripts.Script):
                 FacePopState.first_p = copy.copy(p)
                 if FacePopState.controlNetModule:
                     FacePopState.first_cn_list = FacePopState.controlNetModule.get_all_units_in_processing(FacePopState.first_p)
+
+                    # Filter out unchecked ControlNet units
+                    FacePopState.active_control_nets = []
+                    if FacePopState.first_cn_list:
+                        if FacePopState.cn1_checkbox and len(FacePopState.first_cn_list) > 0:
+                            if self.debug:
+                               print(f"[FacePop Debug] CN1 ACTIVE")
+                            FacePopState.active_control_nets.append(FacePopState.first_cn_list[0])
+                        if FacePopState.cn2_checkbox and len(FacePopState.first_cn_list) > 1:
+                            if self.debug:
+                               print(f"[FacePop Debug] CN2 ACTIVE")
+                            FacePopState.active_control_nets.append(FacePopState.first_cn_list[1])
+                        if FacePopState.cn3_checkbox and len(FacePopState.first_cn_list) > 2:
+                            if self.debug:
+                               print(f"[FacePop Debug] CN3 ACTIVE")
+                            FacePopState.active_control_nets.append(FacePopState.first_cn_list[2])
+                        if FacePopState.cn4_checkbox and len(FacePopState.first_cn_list) > 3:
+                            if self.debug:
+                               print(f"[FacePop Debug] CN4 ACTIVE")
+                            FacePopState.active_control_nets.append(FacePopState.first_cn_list[3])
 
                 if FacePopState.faces is not None and FacePopState.total_faces > 0:
                     # Process the detected faces and accumulate processed faces
@@ -725,6 +782,7 @@ class FacePopScript(scripts.Script):
         def create_dummy_image(width, height):
             return Image.new('RGB', (width, height), color='gray')  # Dummy placeholder image
 
+        angle = 0
         cropped_mask = None
         cropped_mask_resized = None
         for iface, face_data in enumerate(FacePopState.faces):
@@ -741,6 +799,40 @@ class FacePopScript(scripts.Script):
             y_end = min(y + h + padding, image.shape[0])
 
             face = image[y_start:y_end, x_start:x_end]
+
+            if self.debug:
+                # New variables for the bounding box without padding
+                no_padding_x_start = x
+                no_padding_y_start = y
+                no_padding_x_end = x + w
+                no_padding_y_end = y + h
+
+                # Draw a red bounding box for the detected face on the debug image
+                debug_image = image.copy()
+        
+                # Ensure the image is converted to RGB (OpenCV uses BGR by default)
+                if len(debug_image.shape) == 3 and debug_image.shape[2] == 3:  # Ensure it's a color image
+                    debug_image_rgb = cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+                else:
+                    debug_image_rgb = debug_image  # Already RGB
+        
+                # Convert the image to PIL for annotation
+                debug_image_pil = Image.fromarray(debug_image_rgb)
+        
+                # Draw the rectangle and text on the PIL image (no padding)
+                draw = ImageDraw.Draw(debug_image_pil)
+                draw.rectangle([(no_padding_x_start, no_padding_y_start), (no_padding_x_end, no_padding_y_end)], outline="red", width=2)
+                draw.text((no_padding_x_start, no_padding_y_start - 10), f"W: {w}px", fill="white")
+                draw.text((no_padding_x_start, no_padding_y_start + h + 10), f"H: {h}px", fill="white")
+        
+                # Save the debug image
+                debug_output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_debug_face_{iface+1}_detection_no_padding.png")
+                debug_image_pil.save(debug_output_path)
+    
+                print(f"[FacePop Debug] Saved face detection debug image (without padding) at {debug_output_path}")
+    
+
+
             if FacePopState.auto_align_faces:
                 # Detect landmarks using Mediapipe's Face Mesh on the resized face
                 landmarks, lm_masks = self.detect_landmarks(face)
@@ -892,11 +984,13 @@ class FacePopScript(scripts.Script):
                 p_copy.steps = FacePopState.face_sampling_steps
                 p_copy.cfg_scale = FacePopState.face_cfg_scale
                 p_copy.denoising_strength = FacePopState.face_denoising
-                
-            if FacePopState.face_prompt != "":
-                p_copy.prompt = FacePopState.face_prompt
-            if FacePopState.face_neg != "":
-                p_copy.negative_prompt = FacePopState.face_neg
+                if FacePopState.face_seed != -1:
+                    p_copy.seed = FacePopState.face_seed
+
+                if FacePopState.face_prompt != "":
+                    p_copy.prompt = FacePopState.face_prompt
+                if FacePopState.face_neg != "":
+                    p_copy.negative_prompt = FacePopState.face_neg
 
             # Apply the cropped mask for inpainting if available
             if cropped_mask_resized is not None:  # If there's a partial mask, resize it to match the face size
@@ -909,20 +1003,138 @@ class FacePopScript(scripts.Script):
 
             p_copy.image_mask = p_copy.mask
 
+            # R1
+            if FacePopState.reactorpass:
+                p_copyR = copy.copy(p_copy)#(p)
+                if FacePopState.reactorpass_prompt != "":
+                    p_copyR.prompt = FacePopState.reactorpass_prompt
+                    
+                if FacePopState.reactorpass_cn12_cfg > 0.0:
+                    p_copyR.cfg_scale = FacePopState.reactorpass_cn12_cfg
+
+                if FacePopState.reactorpass_cn12_denoise > 0.0:
+                    p_copyR.denoising_strength = FacePopState.reactorpass_cn12_denoise
+
+                #self.remove_all_scripts()
+                # Remove other scripts not allowed in reactor pass
+                self.remove_scripts(FacePopState.deny_scripts_dict.get('reactor', []))
+            
+                if self.debug:
+                    print(f"[FacePop Debug] Face #{iface+1} Running Pre-Pass.")
+            
+                # Disable ControlNet by passing empty list
+                if hasattr(FacePopState, 'controlNetModule') and FacePopState.controlNetModule:
+                    FacePopState.controlNetModule.update_cn_script_in_processing(p_copyR, [])
+                    if self.debug:
+                        print(f"[FacePop Debug] Face #{iface+1} Control Nets Offline for Pre-Pass")
+
+                # Rerun processing with no ControlNet
+                p_copyR.init_images = [face_image]
+                time.sleep(2) # allow cooldown
+                processedR0 = process_images(p_copyR)
+                time.sleep(2) # allow cooldown
+                # Clean up other reactor-related scripts after processing
+                self.restore_all_scripts()
+                self.remove_scripts(FacePopState.deny_scripts_dict.get('reactorfaces', []))
+
+                # Use the newly processed image for output
+                p_copy.init_images = [processedR0.images[0]]
+                face_image = processedR0.images[0]
+                if self.debug:
+                    output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_PrePass.png")
+                    processedR0.images[0].save(output_path)  # Save as a PIL image
+
+                if hasattr(FacePopState, 'controlNetModule') and FacePopState.controlNetModule:
+                    FacePopState.controlNetModule.update_cn_script_in_processing(p_copy, FacePopState.active_control_nets)
+                    if self.debug:
+                        print(f"[FacePop Debug] Face #{iface+1} Control Nets Back Online for PrePass Only")
+            else:
+                self.remove_scripts(FacePopState.deny_scripts_dict.get('faces', []))
+            # R1
+            
             # Apply ControlNet if available
             if FacePopState.controlNetModule:
-                control_net_list = FacePopState.controlNetModule.get_all_units_in_processing(p_copy)
-                if control_net_list and control_net_list[0].enabled:
-                    FacePopState.controlNetModule.update_cn_script_in_processing(p_copy, control_net_list)
+                #control_net_list = FacePopState.controlNetModule.get_all_units_in_processing(p_copy)
+                if FacePopState.active_control_nets and FacePopState.active_control_nets[0].enabled:
+                    if self.debug:
+                       print(f"[FacePop Debug] Face #{iface+1} applying ACTIVE CONTROL NETS.")
+                    FacePopState.controlNetModule.update_cn_script_in_processing(p_copy, FacePopState.active_control_nets)
+
+            # R2
+            #oo_cfg = p_copy.cfg_scale
+            #oo_denoise = p_copy.denoising_strength
+            if FacePopState.reactorpass_cn12:
+                p_copyR = copy.copy(p_copy)#(p)
+                if FacePopState.reactorpass_prompt != "":
+                    p_copyR.prompt = FacePopState.reactorpass_prompt
+
+                if FacePopState.reactorpass_cn12_cfg > 0.0:
+                    p_copyR.cfg_scale = FacePopState.reactorpass_cn12_cfg
+
+                if FacePopState.reactorpass_cn12_denoise > 0.0:
+                    p_copyR.denoising_strength = FacePopState.reactorpass_cn12_denoise
+
+                #self.remove_all_scripts()
+                # Remove other scripts not allowed in reactor pass
+                self.remove_scripts(FacePopState.deny_scripts_dict.get('ControlNet', []))
+                
+                scn_nets = []
+                scn_nets.append(FacePopState.first_cn_list[0])
+                if hasattr(FacePopState, 'controlNetModule') and FacePopState.controlNetModule:
+                    FacePopState.controlNetModule.update_cn_script_in_processing(p_copyR, scn_nets)
+
+                if self.debug:
+                    print(f"[FacePop Debug] Face #{iface+1} Control Net 1 Pass.")
+
+                # Rerun processing with no ControlNet
+                p_copyR.init_images = [face_image]
+                time.sleep(2) # allow cooldown
+                processedR0 = process_images(p_copyR)
+                time.sleep(2) # allow cooldown
+                # Clean up other reactor-related scripts after processing
+                self.restore_all_scripts()
+
+                # Use the newly processed image for output
+                p_copy.init_images = [processedR0.images[0]]
+                if self.debug:
+                    output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_PrePassCN1.png")
+                    processedR0.images[0].save(output_path)  # Save as a PIL image
+
+                if hasattr(FacePopState, 'controlNetModule') and FacePopState.controlNetModule:
+                    scn_nets2 = []
+                    scn_nets2.append(FacePopState.first_cn_list[1])
+                    
+                    if FacePopState.cn3_checkbox and len(FacePopState.first_cn_list) > 2:
+                        scn_nets2.append(FacePopState.first_cn_list[2])
+                    if FacePopState.cn4_checkbox and len(FacePopState.first_cn_list) > 3:
+                        scn_nets2.append(FacePopState.first_cn_list[3])
+
+                if hasattr(FacePopState, 'controlNetModule') and FacePopState.controlNetModule:
+                    FacePopState.controlNetModule.update_cn_script_in_processing(p_copy, scn_nets2)
+                    if self.debug:
+                        print(f"[FacePop Debug] Face #{iface+1} Control Nets 2+ Now Online")
+            else:
+                self.remove_scripts(FacePopState.deny_scripts_dict.get('faces', []))
+            # R2
+
+
+
 
             if self.debug:
                 print("[FacePop Debug] Starting PROCESS_IMAGES() for face")
 
-
-            self.remove_scripts(FacePopState.deny_scripts_dict.get('faces', []))
+            #self.remove_scripts(FacePopState.deny_scripts_dict.get('faces', []))
             processed = process_images(p_copy) # Process the image using the Img2Img pipeline
             time.sleep(2) # allow cooldown
+            
+            #p_copy.cfg_scale = oo_cfg
+            #p_copy.denoising_strength = oo_denoise
+
             self.restore_all_scripts()
+
+            if self.debug:
+                output_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_RBB1.png")
+                processed.images[0].save(output_path)  # Save as a PIL image
 
             if self.debug:
                 print("[FacePop Debug] Exited PROCESS_IMAGES()")
@@ -935,8 +1147,8 @@ class FacePopScript(scripts.Script):
                 # Non-batch mode: Process only image[0]
                 processed_face_image = np.array(processed.images[0])
 
-                if FacePopState.eyes_use:
-                    processed_face_image = self.do_eyes(face_image, processed.images[0])#, landmarks)
+                #if FacePopState.eyes_use:
+                #    processed_face_image = self.do_eyes(face_image, processed.images[0])#, landmarks)
 
                 modnet_used = False
                 if FacePopState.modnet_model is not None:
@@ -986,8 +1198,8 @@ class FacePopScript(scripts.Script):
                 for batch_index in range(1, FacePopState.batch_count + 1):
                     processed_face_image = np.array(processed.images[batch_index])
                     
-                    if FacePopState.eyes_use:
-                        processed_face_image = self.do_eyes(face_image, processed.images[batch_index])#, landmarks)
+                    #if FacePopState.eyes_use:
+                    #    processed_face_image = self.do_eyes(face_image, processed.images[batch_index])#, landmarks)
 
                     modnet_used = False
                     if FacePopState.modnet_model is not None:
@@ -1103,16 +1315,21 @@ class FacePopScript(scripts.Script):
 
             ### NON BATCH MODE
             if num_images == 1:
-
                 # Retrieve the faces corresponding to the image
                 if len(FacePopState.processed_faces) > 0:
                     batch_faces = FacePopState.processed_faces[0]  # Non-batch, so only one set of faces
-                    over_image = self.overlay_faces_on_image(o_image, batch_faces)#, FacePopState.faces)
+                    over_image = self.overlay_faces_on_image(o_image, batch_faces)
                     final_image_pil = Image.fromarray(over_image)
+            
+                # Only try to create image from mask if it's not None
+                if FacePopState.combined_mask is not None:
+                    face_mask_pil = Image.fromarray(FacePopState.combined_mask)
+                else:
+                    face_mask_pil = None  # or handle this case appropriately
 
                 if FacePopState.combined_mask is not None:
                     # Ensure the mask is in grayscale mode ('L') for consistency
-                    face_mask_pil = Image.fromarray(FacePopState.combined_mask)
+
                     if face_mask_pil.mode != 'L':
                         face_mask_pil = face_mask_pil.convert('L')
                         if self.debug:
@@ -1175,6 +1392,27 @@ class FacePopScript(scripts.Script):
                     p_copy.height = FacePopState.proc_height
                     p_copy.batch_size = 1  # Set batch size to 1
                     p_copy.do_not_save_samples = True  # Prevents the default saving behavior
+                    
+                    scn_nets = []
+                    if FacePopState.first_cn_list:
+                        if FacePopState.scn1_checkbox and len(FacePopState.first_cn_list) > 0:
+                            if self.debug:
+                               print(f"[FacePop Debug] SCN1 ACTIVE")
+                            scn_nets.append(FacePopState.first_cn_list[0])
+                        if FacePopState.scn2_checkbox and len(FacePopState.first_cn_list) > 1:
+                            if self.debug:
+                               print(f"[FacePop Debug] SCN2 ACTIVE")
+                            scn_nets.append(FacePopState.first_cn_list[1])
+                        if FacePopState.scn3_checkbox and len(FacePopState.first_cn_list) > 2:
+                            if self.debug:
+                               print(f"[FacePop Debug] SCN3 ACTIVE")
+                            scn_nets.append(FacePopState.first_cn_list[2])
+                        if FacePopState.scn4_checkbox and len(FacePopState.first_cn_list) > 3:
+                            if self.debug:
+                               print(f"[FacePop Debug] SCN4 ACTIVE")
+                            scn_nets.append(FacePopState.first_cn_list[3])
+                            
+                            FacePopState.controlNetModule.update_cn_script_in_processing(p_copy, scn_nets)
 
                     if self.debug:
                         print("[FacePop Debug] Starting final process.")
@@ -1241,9 +1479,10 @@ class FacePopScript(scripts.Script):
                     final_image_pil = Image.fromarray(over_image)
 
                     # Ensure combined_mask is handled
+                    face_mask_pil = Image.fromarray(FacePopState.combined_mask)
                     if FacePopState.combined_mask is not None:
                         # Ensure the mask is in grayscale mode ('L') for consistency
-                        face_mask_pil = Image.fromarray(FacePopState.combined_mask)
+
                         if face_mask_pil.mode != 'L':
                             face_mask_pil = face_mask_pil.convert('L')
                             if self.debug:
@@ -1355,14 +1594,95 @@ class FacePopScript(scripts.Script):
             print("[FacePop Debug] Exiting 'postprocess' method (non-final pass).")
             
 
-    def save_final(self, image, tt= ''):
-        final_output_path = os.path.join(self.output_path(), f"{FacePopState.timestamp}_final_composite{tt}.png")
-        image.save(final_output_path)
+    def save_final(self, image, tt=''):
+        # --- 1) Build AUTOMATIC1111 “parameters” text ---
+        if FacePopState.first_p is not None:
+            p = FacePopState.first_p
+            sd_lines = []
+            sd_lines.append(f"Prompt: {getattr(p, 'prompt', '')}")
+            sd_lines.append(f"Negative prompt: {getattr(p, 'negative_prompt', '')}")
+
+            steps = getattr(p, "steps", None)
+            sampler = getattr(p, "sampler_name", "")
+            cfg = getattr(p, "cfg_scale", None)
+            denoise = getattr(p, "denoising_strength", None)
+            seed = getattr(p, "seed", None)
+
+            # Extract only the checkpoint name (fallback logic)
+            model_name = ""
+            sd_model_obj = getattr(p, "sd_model", None)
+            if sd_model_obj is not None:
+                if hasattr(sd_model_obj, "sd_checkpoint_name"):
+                    model_name = sd_model_obj.sd_checkpoint_name
+                elif hasattr(sd_model_obj, "model_name"):
+                    model_name = sd_model_obj.model_name
+                #else:
+                #    model_name = str(sd_model_obj)
+
+            sd_lines.append(f"Steps: {steps}, Sampler: {sampler}, CFG scale: {cfg}, Denoising: {denoise}")
+            sd_lines.append(f"Seed: {seed}, Model: {model_name}")
+
+            sd_text = "\n".join(sd_lines)
+        else:
+            sd_text = (
+                "Prompt: \n"
+                "Negative prompt: \n"
+                "Steps: , Sampler: , CFG scale: , Denoising: \n"
+                "Seed: , Model: "
+            )
+
+        # --- 2) Build FacePop settings JSON ---
+        fp_settings = {
+            "timestamp": FacePopState.timestamp,
+            "padding_pct": FacePopState.padding,
+            "scale_width": FacePopState.scale_width,
+            "scale_height": FacePopState.scale_height,
+            "keep_ratio": FacePopState.keep_ratio,
+            "confidence_threshold": FacePopState.confidence_threshold,
+            "max_faces": FacePopState.max_faces,
+            "enhancement_method": FacePopState.enhancement_method,
+            "auto_align_faces": FacePopState.auto_align_faces,
+            "rotation_angle_threshold": FacePopState.rotation_angle_threshold,
+            "face_separate_proc": FacePopState.face_separate_proc,
+            "face_sampling_steps": FacePopState.face_sampling_steps,
+            "face_cfg_scale": FacePopState.face_cfg_scale,
+            "face_denoising": FacePopState.face_denoising,
+            "face_prompt": FacePopState.face_prompt,
+            "face_neg": FacePopState.face_neg,
+            "reactorpass": FacePopState.reactorpass,
+            "reactorpass_cn12": FacePopState.reactorpass_cn12,
+            "reactorpass_cn12_cfg": FacePopState.reactorpass_cn12_cfg,
+            "reactorpass_cn12_denoise": FacePopState.reactorpass_cn12_denoise,
+            # …any other FacePop flags you need…
+        }
+        fp_json = json.dumps(fp_settings)
+
+        # --- 3) Detect if “Reactor” is in always-on scripts right now ---
+        reactor_used = "Y" if any(
+            hasattr(s, "title") and callable(s.title) and s.title() == "Reactor"
+            for s in scripts.scripts_img2img.alwayson_scripts
+        ) else "N"
+
+        # --- 4) Add three chunks in order ---
+        png_info = PngInfo()
+        png_info.add_text("parameters", sd_text)
+        png_info.add_text("FacePop_Settings", fp_json)
+        png_info.add_text("Reactor", reactor_used)
+
+        # --- 5) Save PNG with metadata ---
+        final_output_path = os.path.join(
+            self.output_path(),
+            f"{FacePopState.timestamp}_final_composite{tt}.png"
+        )
+        image.save(final_output_path, pnginfo=png_info)
         if self.debug:
-             print(f"[FacePop Debug] Saving final image: {final_output_path}")
+            print(f"[FacePop Debug] Saved final composite with SD parameters, FacePop JSON, Reactor={reactor_used}:")
+            print(f"             {final_output_path}")
+
+        # --- 6) Append to preview_images ---
         FacePopState.preview_images.append(image)
         if self.debug:
-             print(f"[FacePop Debug] Previews appended.")
+            print("[FacePop Debug] Previews appended.")
 
     def estimate_head_pose(self, landmarks, image_size):
         """
@@ -2119,78 +2439,78 @@ class FacePopScript(scripts.Script):
 
     def generate_alpha_mask(self, width, height, padding, feather_pixels=3):
         """
-        Generate a radial gradient alpha mask that feathers from the padding boundary to the edges,
-        incorporating a manual gradient box around the image borders to soften transitions.
-    
+        Generate a radial gradient alpha mask whose falloff becomes shallower
+        (i.e. more opaque near edges) as padding increases above 40% of max_radius.
+
         Parameters:
-        - width: Width of the mask.
+        - width: Width of the mask (face-crop).
         - height: Height of the mask.
-        - padding: Padding around the face to define the mask's inner boundary.
-        - feather_pixels: Number of pixels to feather along the mask edges (default is 3).
-    
+        - padding: Padding in pixels (derived from FacePopState.padding% of face width).
+        - feather_pixels: Number of pixels to feather along the very boundary.
+
         Returns:
-        - alpha_mask: A 2D NumPy array representing the alpha mask.
+        - alpha_mask: A 2D NumPy array (float32 in [0,1]) representing the alpha mask.
         """
-        # Create a meshgrid of coordinates (x, y)
+        # Create coordinate grid
         y_indices, x_indices = np.indices((height, width))
-    
-        # Calculate the center of the face image
-        center_x, center_y = (width - 1) / 2, (height - 1) / 2
-    
-        # Compute the Euclidean distance of each pixel from the center
+        center_x, center_y = (width - 1) / 2.0, (height - 1) / 2.0
         distances_from_center = np.sqrt((x_indices - center_x) ** 2 + (y_indices - center_y) ** 2)
-    
-        # Determine the maximum radius (distance from center to corner)
+
+        # Maximum radius from center to any corner
         max_radius = np.sqrt(center_x**2 + center_y**2)
-    
-        # Define inner and outer radii
+
+        # Compute inner/outer radii
         inner_radius = max_radius - padding
-        outer_radius = max_radius
-    
-        # Handle cases where padding is larger than max_radius
         if inner_radius < 0:
-            inner_radius = 0
-    
+            inner_radius = 0.0
+        outer_radius = max_radius
+
         # Initialize alpha_mask with zeros
         alpha_mask = np.zeros_like(distances_from_center, dtype=np.float32)
-    
-        # Set alpha to 1 where distance <= inner_radius
+
+        # Set fully opaque inside inner_radius
         alpha_mask[distances_from_center <= inner_radius] = 1.0
-    
-        # For distances between inner_radius and outer_radius, compute alpha decreasing from 1 to 0
-        mask_region = (distances_from_center > inner_radius) & (distances_from_center <= outer_radius)
-        alpha_mask[mask_region] = 1.0 - ((distances_from_center[mask_region] - inner_radius) / (outer_radius - inner_radius))
-    
-        # Apply non-linear falloff for smoother transition
-        alpha_mask[mask_region] = alpha_mask[mask_region] ** 2  # Adjust exponent as needed
-    
-        # Ensure alpha_mask values are between 0 and 1
-        alpha_mask = np.clip(alpha_mask, 0, 1)
-    
-        # **Manual Feathering at the Image Edges**
+
+        # Fade region between inner_radius and outer_radius
+        fade_region = (distances_from_center > inner_radius) & (distances_from_center <= outer_radius)
+        if np.any(fade_region):
+            # Base linear falloff from 1?0
+            base = 1.0 - ((distances_from_center[fade_region] - inner_radius) / (outer_radius - inner_radius))
+
+            # Determine padding percentage relative to max_radius
+            padding_pct = (padding / max_radius) * 100.0 if max_radius > 0 else 100.0
+
+            # If padding_pct = 40%, keep exponent=2.0 (standard quadratic falloff)
+            if padding_pct <= 40.0:
+                exponent = 2.0
+            else:
+                # As padding_pct goes from 40?100, ramp exponent down from 2.0?0.5
+                extra = (padding_pct - 40.0) / (100.0 - 40.0)  # in [0,1]
+                exponent = 2.0 - extra * (2.0 - 0.5)          # from 2.0 down to 0.5
+
+            # Apply non-linear falloff
+            alpha_mask[fade_region] = np.power(base, exponent)
+
+        # Clamp to [0,1]
+        alpha_mask = np.clip(alpha_mask, 0.0, 1.0)
+
+        # Finally, apply a small feather at the very image border
         if feather_pixels > 0:
-            # Initialize feathering mask with ones
             feather_mask = np.ones_like(alpha_mask, dtype=np.float32)
-    
-            # Compute the distance of each pixel from the nearest image border
-            distance_to_edge = np.minimum.reduce([
-                x_indices,  # Distance to left edge
-                width - 1 - x_indices,  # Distance to right edge
-                y_indices,  # Distance to top edge
-                height - 1 - y_indices  # Distance to bottom edge
+            dist_to_edge = np.minimum.reduce([
+                x_indices,
+                width - 1 - x_indices,
+                y_indices,
+                height - 1 - y_indices
             ])
-    
-            # For pixels within the feathering region, adjust the feather_mask
-            feather_region = distance_to_edge < feather_pixels
-            feather_mask[feather_region] = distance_to_edge[feather_region] / feather_pixels
-    
-            # Combine the radial mask with the feathering mask
+            feather_region = dist_to_edge < feather_pixels
+            feather_mask[feather_region] = dist_to_edge[feather_region] / feather_pixels
             alpha_mask = alpha_mask * feather_mask
-    
-            # Ensure alpha_mask values are between 0 and 1 after combination
-            alpha_mask = np.clip(alpha_mask, 0, 1)
-    
+            alpha_mask = np.clip(alpha_mask, 0.0, 1.0)
+
         return alpha_mask
+
+
 
     ### Applies an unsharp mask to the image for sharpening.
     ### Returns the sharpened image.
@@ -2394,23 +2714,35 @@ class FacePopScript(scripts.Script):
         """
         # Check if the image is a NumPy array and convert it to a PIL Image
         if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
+            pil = Image.fromarray(image)
+        else:
+            pil = image.copy()
 
         if use_alpha:
-            # Ensure the image is in RGBA mode for transparency support
-            if image.mode != 'RGBA':
-                image = image.convert('RGBA')
-            # Rotate with transparent background (0, 0, 0, 0) for alpha support
-            rotated_image = image.rotate(angle, expand=False, fillcolor=(0, 0, 0, 0))  # Transparent fill
+            # Ensure RGBA mode (so we preserve transparency)
+            if pil.mode != "RGBA":
+                pil = pil.convert("RGBA")
+            # Rotate with bicubic resample and transparent fill
+            rotated = pil.rotate(
+                angle,
+                resample=Image.BICUBIC,
+                expand=False,
+                fillcolor=(0, 0, 0, 0)
+            )
         else:
-            # Ensure the image is in RGB mode for non-alpha support
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            # Rotate with white background (255, 255, 255) for no transparency
-            rotated_image = image.rotate(angle, expand=False, fillcolor=(255, 255, 255))  # White fill
+            # Ensure RGB mode
+            if pil.mode != "RGB":
+                pil = pil.convert("RGB")
+            # Rotate with bicubic and white fill
+            rotated = pil.rotate(
+                angle,
+                resample=Image.BICUBIC,
+                expand=False,
+                fillcolor=(255, 255, 255)
+            )
 
-        # Convert the rotated image back to a NumPy array and return
-        return np.array(rotated_image)
+        # Convert back to NumPy array
+        return np.array(rotated)
 
     def detect_landmarks(self, face_image):
         """
@@ -3054,130 +3386,6 @@ class FacePopScript(scripts.Script):
             os.makedirs(FacePopState.debug_path, exist_ok=True)  # Create the debug directory if it doesn't exist
         return FacePopState.debug_path
 
-
-    def do_eyes(self, original_face_image, processed_face_image):
-        """
-        Replaces the eyes in the processed_face_image with the original eyes from the original_face_image.
-        The original eye regions are stretched or resized to fit the new size and position based on the landmarks,
-        and the original eyes are made slightly larger by 1 pixel in each direction.
-        
-        :param original_face_image: The original face image (in PIL format) before any processing.
-        :param processed_face_image: The face image (in PIL format) after processing (post-process).
-        :return: The processed face image with restored eyes from the original image.
-        """
-    
-        # Step 1: Detect landmarks and masks in both the original and processed images
-        landmarks, xxxmasks = self.detect_landmarks(np.array(original_face_image))
-        landmarks2, masks = self.detect_landmarks(np.array(processed_face_image))
-    
-        if not landmarks2:
-            if self.debug:
-                print("[FacePop Debug] No landmarks detected in the processed image.")
-            return processed_face_image  # Return original image if no landmarks are found
-    
-        eyes_mask = masks.get('eyes_mask')
-        if eyes_mask is None:
-            if self.debug:
-                print("[FacePop Debug] No eye mask found in the processed image.")
-            return processed_face_image  # Return original image if no eye mask is found
-    
-        eyes_mask_pil = Image.fromarray(eyes_mask).convert('L')
-    
-        # Create a copy of the processed face image to work on
-        modified_face_image = processed_face_image.copy()
-    
-        # Step 2: Get bounding boxes for the left and right eyes in the original image
-        left_eye_box = self.get_eye_bounding_box(landmarks, 'left')  # Original landmarks
-        right_eye_box = self.get_eye_bounding_box(landmarks, 'right')
-    
-        left_eye_image = original_face_image.crop(left_eye_box)
-        right_eye_image = original_face_image.crop(right_eye_box)
-    
-        # Step 3: Get new bounding boxes for the left and right eyes from the processed image landmarks
-        left_eye_box2 = self.get_eye_bounding_box(landmarks2, 'left')  # Post-process landmarks
-        right_eye_box2 = self.get_eye_bounding_box(landmarks2, 'right')
-    
-        # Step 4: Expand the bounding boxes by 2 pixels in each direction
-        def expand_box(box, padding=2, image_size=None):
-            x_min, y_min, x_max, y_max = box
-            if image_size:
-                img_width, img_height = image_size
-            else:
-                img_width, img_height = None, None
-            x_min = max(x_min - padding, 0)
-            y_min = max(y_min - padding, 0)
-            x_max = min(x_max + padding, img_width) if img_width else x_max + padding
-            y_max = min(y_max + padding, img_height) if img_height else y_max + padding
-            return (int(x_min), int(y_min), int(x_max), int(y_max))
-    
-        left_eye_box_expanded = expand_box(left_eye_box2, padding=2, image_size=processed_face_image.size)
-        right_eye_box_expanded = expand_box(right_eye_box2, padding=2, image_size=processed_face_image.size)
-    
-        # Step 5: Resize the original eye images to fit the expanded bounding boxes
-        left_eye_size = (left_eye_box_expanded[2] - left_eye_box_expanded[0], left_eye_box_expanded[3] - left_eye_box_expanded[1])
-        right_eye_size = (right_eye_box_expanded[2] - right_eye_box_expanded[0], right_eye_box_expanded[3] - right_eye_box_expanded[1])
-    
-        left_eye_resized = left_eye_image.resize(left_eye_size, Image.LANCZOS)
-        right_eye_resized = right_eye_image.resize(right_eye_size, Image.LANCZOS)
-
-        # Step 6: Paste the resized original eyes onto the processed face image at the correct positions
-        modified_face_image.paste(left_eye_resized, (left_eye_box_expanded[0], left_eye_box_expanded[1]), left_eye_resized)
-        modified_face_image.paste(right_eye_resized, (right_eye_box_expanded[0], right_eye_box_expanded[1]), right_eye_resized)
-    
-        # Step 7: Invert the eye mask and paste the processed face image over the non-eye regions
-        #inverted_mask = ImageChops.invert(eyes_mask_pil)
-        modified_face_image.paste(processed_face_image, (0, 0), eyes_mask_pil)
-
-        # If separate eye processing is enabled, apply additional processing
-        if FacePopState.eyes_separate_proc:
-            # Step 7: Prepare the eye image for separate processing
-            p_copy = copy.copy(FacePopState.first_p)  # Copy original processing parameters
-            p_copy.init_images = [modified_face_image]
-            p_copy.width = modified_face_image.width
-            p_copy.height = modified_face_image.height
-            p_copy.steps = FacePopState.eyes_sampling_steps
-            p_copy.cfg_scale = FacePopState.eyes_cfg_scale
-            p_copy.denoising_strength = FacePopState.eyes_denoising
-            p_copy.prompt = FacePopState.eyes_prompt if FacePopState.eyes_prompt else ""
-            p_copy.negative_prompt = FacePopState.eyes_neg if FacePopState.eyes_neg else ""
-    
-            # Process the eyes using separate settings
-            FacePopState.is_processing_faces = True
-            processed_copy = process_images(p_copy)
-            time.sleep(2) # allow cooldown
-            FacePopState.is_processing_faces = False
-    
-            processed_image = processed_copy.images[0].resize(modified_face_image.size, Image.LANCZOS)
-    
-            # Final step: Overlay the processed eyes onto the modified face image
-            modified_face_image.paste(processed_image, (0, 0), eyes_mask_pil)
-
-        # Convert modified_face_image back to numpy array before returning
-        return np.array(modified_face_image)
-    
-    def get_eye_bounding_box(self, landmarks, eye_side):
-        """
-        Get the bounding box for the left or right eye based on the landmarks.
-
-        :param landmarks: The facial landmarks.
-        :param eye_side: Either 'left' or 'right', to specify which eye's bounding box to return.
-        :return: A tuple (x_min, y_min, x_max, y_max) representing the bounding box of the eye.
-        """
-        if eye_side == 'left':
-            eye_indices = [33, 133, 159, 145]  # Approximate corner landmarks for the left eye
-        else:
-            eye_indices = [362, 263, 386, 374]  # Approximate corner landmarks for the right eye
-    
-        x_coords = [landmarks[i][0] for i in eye_indices]
-        y_coords = [landmarks[i][1] for i in eye_indices]
-
-        x_min = min(x_coords)
-        y_min = min(y_coords)
-        x_max = max(x_coords)
-        y_max = max(y_coords)
-    
-        return (x_min, y_min, x_max, y_max)
-        
     #def dump_p(self, p, filename):
     #    # Create the file path with the timestamp
     #    dump_file_path = os.path.join(self.debug_path(), f"{FacePopState.timestamp}_{filename}.txt")

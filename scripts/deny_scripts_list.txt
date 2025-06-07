@@ -8,6 +8,26 @@ FacePopScriptAfter
 [faces]
 ADetailer
 
+; just reactor, revmoe all EXCEPT reactor
+[reactor]
+ADetailer
+Overlay
+Soft Inpainting
+Asymmetric tiling
+Tiled Diffusion
+demofusion
+Tiled VAE
+OpenPose Editor
+Txt/Img to 3D Model
+Comments
+Refiner
+Sampler
+Seed
+
+[reactorfaces]
+ADetailer
+ReActor
+
 ; ignore any of these scripts during final image composite
 [final]
 ;ADetailer
