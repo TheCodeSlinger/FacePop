@@ -1348,11 +1348,17 @@ class FacePopScript(scripts.Script):
                 # Check if p.image_mask exists
                 if p.image_mask is not None and not FacePopState.ignore_inpaint_final:
                     # Copy the existing mask
-                    xmask = p.image_mask.copy()
-
-                    # Ensure xmask is the same size as face_mask_pil
-                    if xmask.size != face_mask_pil.size:
-                        xmask = xmask.resize(face_mask_pil.size, Image.LANCZOS)
+                    try:
+                        xmask = p.image_mask.copy()
+                    except AttributeError:
+                        if self.debug:
+                            print("[FacePop Debug] p.image_mask was None when trying to copy.")
+                        xmask = None
+                
+                    if xmask is not None and face_mask_pil is not None:
+                        # Ensure xmask is the same size as face_mask_pil
+                        if xmask.size != face_mask_pil.size:
+                            xmask = xmask.resize(face_mask_pil.size, Image.LANCZOS)
                 else:
                     # Create an all-white mask (255 represents white in grayscale)
                     xmask = Image.new('L', face_mask_pil.size, 255)
@@ -1595,7 +1601,7 @@ class FacePopScript(scripts.Script):
             
 
     def save_final(self, image, tt=''):
-        # --- 1) Build AUTOMATIC1111 ìparametersî text ---
+        # --- 1) Build AUTOMATIC1111 ‚Äúparameters‚Äù text ---
         if FacePopState.first_p is not None:
             p = FacePopState.first_p
             sd_lines = []
@@ -1653,11 +1659,11 @@ class FacePopScript(scripts.Script):
             "reactorpass_cn12": FacePopState.reactorpass_cn12,
             "reactorpass_cn12_cfg": FacePopState.reactorpass_cn12_cfg,
             "reactorpass_cn12_denoise": FacePopState.reactorpass_cn12_denoise,
-            # Öany other FacePop flags you needÖ
+            # ‚Ä¶any other FacePop flags you need‚Ä¶
         }
         fp_json = json.dumps(fp_settings)
 
-        # --- 3) Detect if ìReactorî is in always-on scripts right now ---
+        # --- 3) Detect if ‚ÄúReactor‚Äù is in always-on scripts right now ---
         reactor_used = "Y" if any(
             hasattr(s, "title") and callable(s.title) and s.title() == "Reactor"
             for s in scripts.scripts_img2img.alwayson_scripts
